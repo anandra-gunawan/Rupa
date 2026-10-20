@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1e1e1e">
+<title>Vector Editor</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <div class="tb-group"><button id="btnToggleSidebar" title="Toggle panel">☰</button></div>
+  <div class="tb-group">
+    <button id="btnUndo" title="Undo">↶</button>
+    <button id="btnRedo" title="Redo">↷</button>
+  </div>
+  <div class="tb-group"><button id="btnFileMenu" title="File menu">📁</button></div>
+  <div class="tb-group tb-end">
+    <button id="btnMagnet" class="magnet-on" title="Magnet snap">🧲</button>
+    <button id="btnFit" title="Fit to view">⤢</button>
+    <span id="zoomLabel">100%</span>
+    <span id="autosaveDot" title="Autosave: idle"></span>
+  </div>
+</header>
+
+<div class="main">
+  <aside class="tools">
+    <button data-tool="select" title="Select">↖</button>
+    <button data-tool="pen"    title="Pen tool">✎</button>
+    <button data-tool="rect"   title="Rectangle (hold 2s = full canvas)">▭</button>
+    <button data-tool="ellipse" title="Ellipse">◯</button>
+    <button data-tool="line"   title="Line">╱</button>
+    <button data-tool="text"   title="Text">T</button>
+    <button data-tool="hand"   title="Hand / Pan">✋</button>
+  </aside>
+
+  <div class="canvas-area" id="canvasArea">
+    <canvas id="scene"></canvas>
+    <svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div class="floating-toolbar" id="floatingToolbar"></div>
+  </div>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="panel-alpha">
+        <span class="panel-alpha-icon" title="Panel opacity">◐</span>
+        <input type="range" id="panelAlpha" min="0.25" max="1" step="0.05" value="1">
+      </div>
+      <button class="sidebar-close" id="btnCloseSidebar">×</button>
+    </div>
+
+    <div class="section">
+      <h3>Canvas</h3>
+      <div class="field-row">
+        <div class="field"><label>Width</label><input type="number" id="canvasW" min="10" step="10"></div>
+        <div class="field"><label>Height</label><input type="number" id="canvasH" min="10" step="10"></div>
+      </div>
+    </div>
+
+    <div class="section" id="powerclipSection" style="display:none">
+      <h3>PowerClip</h3>
+      <div class="btn-row">
+        <button id="btnPowerClipAction" class="action">📦 Create</button>
+      </div>
+    </div>
+
+    <div class="section" id="booleanSection" style="display:none">
+      <h3>Boolean</h3>
+      <div class="bool-row">
+        <button data-bool="union" title="Union">∪</button>
+        <button data-bool="subtract" title="Subtract">−</button>
+        <button data-bool="intersect" title="Intersect">∩</button>
+        <button data-bool="exclude" title="Exclude">⊕</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Transform</h3>
+      <div class="field">
+        <label>Aspect</label>
+        <div class="btn-row">
+          <button id="btnAspectLock" title="Aspect ratio lock">🔓</button>
+        </div>
+      </div>
+      <div class="field" id="pathActionsRow" style="display:none">
+        <label>Path</label>
+        <div class="btn-row">
+          <button id="btnConvertPath" class="action" title="Convert to path">→ Path</button>
+          <button id="btnEditPath" class="action" title="Edit anchors" style="display:none">✏️ Edit</button>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>X</label><input type="number" id="propX" step="1"></div>
+        <div class="field"><label>Y</label><input type="number" id="propY" step="1"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>W</label><input type="number" id="propW" step="1" min="1"></div>
+        <div class="field"><label>H</label><input type="number" id="propH" step="1" min="1"></div>
+      </div>
+      <div class="field"><label>Rotation</label><input type="number" id="propRot" step="1"></div>
+    </div>
+
+    <div class="section">
+      <h3>Fill</h3>
+      <div class="field">
+        <label>Mode</label>
+        <div class="fill-mode-tabs">
+          <button data-fill-mode="solid" class="active">Solid</button>
+          <button data-fill-mode="linear">Gradient</button>
+        </div>
+      </div>
+      <div id="fillSolidRow" style="margin-top:8px">
+        <div class="field">
+          <label>Color</label>
+          <div class="color-field">
+            <input type="color" id="fillColor" value="#4ecdc4">
+            <input type="text" id="fillHex" placeholder="#RRGGBB" maxlength="7">
+          </div>
+        </div>
+      </div>
+      <div id="fillGradientRow" style="display:none; margin-top:8px">
+        <div class="field">
+          <label>Type</label>
+          <select id="gradientType">
+            <option value="linear">Linear</option>
+            <option value="radial">Radial</option>
+          </select>
+        </div>
+        <div class="field" id="gradientAngleRow">
+          <label>Angle</label>
+          <input type="number" id="gradientAngle" value="0" min="0" max="360" step="15">
+        </div>
+        <div class="field" style="align-items:flex-start; margin-top:6px">
+          <label style="padding-top:5px">Stops</label>
+          <div style="flex:1; min-width:0">
+            <div id="gradientStops"></div>
+            <button id="btnAddStop" class="small-action-btn">+ Add stop</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Stroke</h3>
+      <div class="field">
+        <label>Color</label>
+        <div class="color-field">
+          <input type="color" id="strokeColor" value="#2a2a2a">
+          <input type="text" id="strokeHex" placeholder="#RRGGBB" maxlength="7">
+        </div>
+      </div>
+      <div class="field"><label>Width</label><input type="number" id="propStrokeW" step="0.5" min="0"></div>
+      <div class="field"><label>Opacity</label><input type="number" id="propOpacity" step="0.1" min="0" max="1"></div>
+    </div>
+
+    <div class="section" id="effectsSection" style="display:none">
+      <h3>Effects</h3>
+      <div class="field">
+        <label>Shadow</label>
+        <input type="checkbox" id="fxShadowOn">
+      </div>
+      <div class="field-row" id="fxShadowFields">
+        <div class="field"><label>X</label><input type="number" id="fxShadowX" value="4" step="1"></div>
+        <div class="field"><label>Y</label><input type="number" id="fxShadowY" value="4" step="1"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Blur</label><input type="number" id="fxShadowBlur" value="8" step="1" min="0"></div>
+        <div class="field"><label>Color</label><div class="color-field"><input type="color" id="fxShadowColor" value="#000000"><input type="text" id="fxShadowHex" placeholder="#RRGGBB" maxlength="7"></div></div>
+      </div>
+      <div class="field" style="margin-top:8px">
+        <label>Blur</label>
+        <input type="checkbox" id="fxBlurOn">
+      </div>
+      <div class="field"><label>Radius</label><input type="number" id="fxBlurRadius" value="4" step="1" min="0"></div>
+    </div>
+
+    <div class="section" id="cornersSection" style="display:none">
+      <h3>Corners</h3>
+      <div class="field">
+        <label>Apply to</label>
+        <select id="propCornerMode">
+          <option value="all">All corners</option>
+          <option value="tl">Top-Left</option>
+          <option value="tr">Top-Right</option>
+          <option value="br">Bottom-Right</option>
+          <option value="bl">Bottom-Left</option>
+        </select>
+      </div>
+      <div class="field"><label>Radius</label><input type="number" id="propCornerRadius" min="0" step="1" value="0"></div>
+    </div>
+
+    <div class="section" id="textSection" style="display:none">
+      <h3>Text</h3>
+      <div class="field"><label>Content</label><input type="text" id="propText"></div>
+      <div class="field"><label>Font size</label><input type="number" id="propFontSize" min="6" step="1"></div>
+    </div>
+
+    <div class="section">
+      <h3>Layers</h3>
+      <div class="layer-actions">
+        <button id="btnLayerMerge" title="Merge">⊞</button>
+        <button id="btnLayerUngroup" title="Ungroup">⊟</button>
+        <button id="btnLayerMoveInto" title="Move into">📁</button>
+        <button id="btnLayerUp" title="Forward">↑</button>
+        <button id="btnLayerDown" title="Backward">↓</button>
+        <button id="btnLayerDelete" title="Delete">🗑</button>
+      </div>
+      <div class="layers-list" id="layersList">
+        <div class="empty-state">No layers yet</div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+<div class="tooltip" id="tooltip"></div>
+
+<div class="restore-banner" id="restoreBanner">
+  <div>
+    <div class="msg">📂 Autosaved work found</div>
+    <div class="sub" id="restoreBannerSub">from just now</div>
+  </div>
+  <div class="actions">
+    <button class="btn-fresh" id="btnRestoreFresh">Start Fresh</button>
+    <button class="btn-restore" id="btnRestoreAutosave">Restore</button>
+  </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
