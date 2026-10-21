@@ -1,29 +1,19 @@
 "use strict";
 
-/* ============================================================
-   STATE
-   ============================================================ */
+/* ============ STATE ============ */
 const state = {
-  doc: null,
-  selection: new Set(),
-  viewport: { x: 0, y: 0, zoom: 1 },
+  doc: null, selection: new Set(), viewport: { x: 0, y: 0, zoom: 1 },
   tool: 'select',
   defaultStyle: { fill: '#4ecdc4', stroke: '#2a2a2a', strokeWidth: 2, opacity: 1 },
   history: { undo: [], redo: [] },
-  interaction: null,
-  snapshotBefore: null,
-  aspectLocked: false,
-  magnetEnabled: true,
-  snapGuides: null,
+  interaction: null, snapshotBefore: null,
+  aspectLocked: false, magnetEnabled: true, snapGuides: null,
   pen: { active: false, nodeId: null, dragAnchorIndex: -1, mousePos: null, dragging: false },
-  pathEditing: null,
-  selectedAnchor: -1,
-  clipboard: null,
-  pasteCount: 0,
-  dragging: false,
-  draggingIds: null,
-  editingPowerClip: null,
-  _editingContentsIds: null,
+  pathEditing: null, selectedAnchor: -1,
+  clipboard: null, pasteCount: 0,
+  dragging: false, draggingIds: null,
+  editingPowerClip: null, _editingContentsIds: null,
+  cropping: null,
 };
 
 let activePointerId = null, pointerAbort = null, marqueeRect = null;
@@ -33,9 +23,7 @@ let panelUpdateTimer = null, polygonClippingPromise = null, autosaveTimer = null
 let pinchState = null;
 const touchPointers = new Map();
 
-/* ============================================================
-   CANVAS + CACHES
-   ============================================================ */
+/* ============ CANVAS ============ */
 const scene = document.getElementById('scene');
 const ctx = scene.getContext('2d');
 const overlay = document.getElementById('overlay');
@@ -47,11 +35,7 @@ let hitCtx = null;
 let cachedSceneRect = null;
 
 function getHitCtx() {
-  if (!hitCtx) {
-    const c = document.createElement('canvas');
-    c.width = 1; c.height = 1;
-    hitCtx = c.getContext('2d');
-  }
+  if (!hitCtx) { const c = document.createElement('canvas'); c.width = 1; c.height = 1; hitCtx = c.getContext('2d'); }
   return hitCtx;
 }
 function getImage(src) {
@@ -80,17 +64,13 @@ function pathHash(node) {
   const parts = [];
   for (const sp of getSubpaths(node)) {
     parts.push(sp.closed ? '1' : '0');
-    for (const a of sp.anchors) parts.push(a.x.toFixed(2), a.y.toFixed(2),
-      a.cIn.x.toFixed(2), a.cIn.y.toFixed(2), a.cOut.x.toFixed(2), a.cOut.y.toFixed(2));
+    for (const a of sp.anchors) parts.push(a.x.toFixed(2), a.y.toFixed(2), a.cIn.x.toFixed(2), a.cIn.y.toFixed(2), a.cOut.x.toFixed(2), a.cOut.y.toFixed(2));
   }
   return fnv1a(parts.join('|'));
 }
 
-/* ============================================================
-   AUTOSAVE
-   ============================================================ */
+/* ============ AUTOSAVE ============ */
 const DB_NAME = 'vector-editor-db', STORE_NAME = 'autosave', AUTOSAVE_DELAY = 1500;
-
 function openDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 1);
@@ -102,7 +82,6 @@ function openDB() {
     req.onerror = () => reject(req.error);
   });
 }
-
 async function autosaveDoc() {
   try {
     let docToSave = state.doc;
@@ -126,30 +105,21 @@ async function autosaveDoc() {
     updateAutosaveIndicator('error');
   }
 }
-
 function findPC(nodes, id) {
   for (const n of nodes) {
     if (n.id === id) return n;
-    if (n.type === 'group' && n.children) {
-      const r = findPC(n.children, id);
-      if (r) return r;
-    }
+    if (n.type === 'group' && n.children) { const r = findPC(n.children, id); if (r) return r; }
   }
   return null;
 }
-
 async function loadAutosave() {
   try {
     const db = await openDB();
     const tx = db.transaction(STORE_NAME, 'readonly');
     const req = tx.objectStore(STORE_NAME).get('latest');
-    return new Promise((resolve) => {
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => resolve(null);
-    });
+    return new Promise((resolve) => { req.onsuccess = () => resolve(req.result || null); req.onerror = () => resolve(null); });
   } catch (e) { return null; }
 }
-
 async function clearAutosave() {
   try {
     const db = await openDB();
@@ -158,13 +128,11 @@ async function clearAutosave() {
     await new Promise((res) => { tx.oncomplete = res; });
   } catch (e) {}
 }
-
 function scheduleAutosave() {
   clearTimeout(autosaveTimer);
   updateAutosaveIndicator('pending');
   autosaveTimer = setTimeout(() => { autosaveTimer = null; autosaveDoc(); }, AUTOSAVE_DELAY);
 }
-
 function updateAutosaveIndicator(status) {
   const dot = document.getElementById('autosaveDot');
   if (!dot) return;
@@ -179,9 +147,7 @@ function updateAutosaveIndicator(status) {
   dot.title = title;
 }
 
-/* ============================================================
-   RENDER BATCHING
-   ============================================================ */
+/* ============ RENDER BATCHING ============ */
 function scheduleRender() {
   if (renderPending) return;
   renderPending = true;
@@ -192,12 +158,10 @@ function scheduleRender() {
     renderOverlay();
   });
 }
-
 function schedulePanelUpdate() {
   if (panelUpdateTimer) return;
   panelUpdateTimer = setTimeout(() => { panelUpdateTimer = null; updatePropertiesPanel(); }, 80);
 }
-
 function ensurePolygonClipping() {
   if (typeof window.polygonClipping !== 'undefined') return Promise.resolve(window.polygonClipping);
   if (polygonClippingPromise) return polygonClippingPromise;
@@ -211,9 +175,7 @@ function ensurePolygonClipping() {
   return polygonClippingPromise;
 }
 
-/* ============================================================
-   HELPERS
-   ============================================================ */
+/* ============ HELPERS ============ */
 function genId() { return 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
@@ -269,8 +231,6 @@ function isDescendant(ancestorId, nodeId) {
   }
   return walk(anc.children);
 }
-
-// Traverse semua anchor points (path + powerclip container/contents + group children)
 function eachPoint(node, fn) {
   if (node.subpaths) for (const sp of node.subpaths) for (const a of sp.anchors) fn(a);
   else if (node.anchors) for (const a of node.anchors) fn(a);
@@ -280,10 +240,12 @@ function eachPoint(node, fn) {
     if (node.contents) for (const c of node.contents) eachPoint(c, fn);
   }
 }
-
 function expandBounds(node) {
   if (node.type === 'path') return computePathBounds(node);
   if (node.type === 'powerclip') return node.container ? expandBounds(node.container) : { x:0, y:0, w:0, h:0 };
+  if (node.type === 'text' && node.attachedPath) {
+    return computePathBounds({ subpaths: node.attachedPath.subpaths });
+  }
   if (node.type === 'group') {
     if (!node.children || !node.children.length) return { x:0, y:0, w:0, h:0 };
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -311,9 +273,7 @@ function expandBounds(node) {
 }
 const getNodeBounds = expandBounds;
 
-/* ============================================================
-   GEOMETRY
-   ============================================================ */
+/* ============ GEOMETRY ============ */
 function screenToWorld(sx, sy) {
   return { x: (sx - state.viewport.x) / state.viewport.zoom, y: (sy - state.viewport.y) / state.viewport.zoom };
 }
@@ -323,10 +283,6 @@ function worldToScreen(wx, wy) {
 function localToWorld(lx, ly, cx, cy, cos, sin) {
   const dx = lx - cx, dy = ly - cy;
   return { x: cx + dx*cos - dy*sin, y: cy + dx*sin + dy*cos };
-}
-function worldToLocal(wx, wy, cx, cy, cos, sin) {
-  const dx = wx - cx, dy = wy - cy;
-  return { x: cx + dx*cos + dy*sin, y: cy - dx*sin + dy*cos };
 }
 function getHandleScreenPx() { return isTouchDevice() ? 4 : 2; }
 function getHandleHitPx() { return isTouchDevice() ? 22 : 12; }
@@ -340,9 +296,124 @@ function viewportMatrix() {
   return `translate(${state.viewport.x} ${state.viewport.y}) scale(${state.viewport.zoom})`;
 }
 
-/* ============================================================
-   BEZIER / SUBPATHS
-   ============================================================ */
+/* ============ RULER & GUIDES ============ */
+function drawRulers() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const zoom = state.viewport.zoom;
+
+  function drawOne(canvas, axis) {
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    if (canvas.width !== Math.floor(rect.width * dpr) || canvas.height !== Math.floor(rect.height * dpr)) {
+      canvas.width = Math.floor(rect.width * dpr);
+      canvas.height = Math.floor(rect.height * dpr);
+    }
+    const c = canvas.getContext('2d');
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, rect.width, rect.height);
+    c.fillStyle = '#f8f8f8';
+    c.fillRect(0, 0, rect.width, rect.height);
+    c.strokeStyle = '#999';
+    c.fillStyle = '#555';
+    c.font = '9px system-ui';
+    c.textBaseline = 'middle';
+
+    let step = 100;
+    if (zoom > 4) step = 10;
+    else if (zoom > 2) step = 20;
+    else if (zoom > 1) step = 50;
+    else if (zoom > 0.5) step = 100;
+    else if (zoom > 0.2) step = 200;
+    else step = 500;
+
+    if (axis === 'h') {
+      const startW = -state.viewport.x / zoom;
+      const endW = (rect.width - state.viewport.x) / zoom;
+      const start = Math.ceil(startW / step) * step;
+      for (let w = start; w <= endW; w += step) {
+        const sx = w * zoom + state.viewport.x;
+        if (sx < -20 || sx > rect.width + 20) continue;
+        c.beginPath(); c.moveTo(sx, rect.height - 5); c.lineTo(sx, rect.height); c.stroke();
+        for (let m = 1; m < 5; m++) {
+          const msx = (w + step / 5 * m) * zoom + state.viewport.x;
+          c.beginPath(); c.moveTo(msx, rect.height - 2); c.lineTo(msx, rect.height); c.stroke();
+        }
+        c.fillText(String(w), sx + 2, 8);
+      }
+    } else {
+      const startW = -state.viewport.y / zoom;
+      const endW = (rect.height - state.viewport.y) / zoom;
+      const start = Math.ceil(startW / step) * step;
+      for (let w = start; w <= endW; w += step) {
+        const sy = w * zoom + state.viewport.y;
+        if (sy < -20 || sy > rect.height + 20) continue;
+        c.beginPath(); c.moveTo(rect.width - 5, sy); c.lineTo(rect.width, sy); c.stroke();
+        for (let m = 1; m < 5; m++) {
+          const msy = (w + step / 5 * m) * zoom + state.viewport.y;
+          c.beginPath(); c.moveTo(rect.width - 2, msy); c.lineTo(rect.width, msy); c.stroke();
+        }
+        c.save();
+        c.translate(8, sy + 2);
+        c.rotate(-Math.PI / 2);
+        c.fillText(String(w), 0, 0);
+        c.restore();
+      }
+    }
+
+    for (const g of (state.doc.guides || [])) {
+      if (axis === 'h' && g.axis === 'v') {
+        const sx = g.pos * zoom + state.viewport.x;
+        if (sx >= 0 && sx <= rect.width) { c.fillStyle = '#0af'; c.fillRect(sx - 1, 0, 2, rect.height); }
+      } else if (axis === 'v' && g.axis === 'h') {
+        const sy = g.pos * zoom + state.viewport.y;
+        if (sy >= 0 && sy <= rect.height) { c.fillStyle = '#0af'; c.fillRect(0, sy - 1, rect.width, 2); }
+      }
+    }
+  }
+
+  drawOne(document.getElementById('rulerHCanvas'), 'h');
+  drawOne(document.getElementById('rulerVCanvas'), 'v');
+}
+
+function addGuide(axis, pos) {
+  commitChange(() => {
+    if (!state.doc.guides) state.doc.guides = [];
+    state.doc.guides.push({ id: genId(), axis, pos });
+  });
+  scheduleRender();
+}
+function removeGuide(id) {
+  commitChange(() => {
+    state.doc.guides = (state.doc.guides || []).filter(g => g.id !== id);
+  });
+  scheduleRender();
+}
+function bindRulers() {
+  const rulerH = document.getElementById('rulerH');
+  const rulerV = document.getElementById('rulerV');
+
+  rulerH.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    const rect = getSceneRect();
+    const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    beginInteraction();
+    state.interaction = { type: 'guide-create', axis: 'h' };
+    attachPointerHandlers(e.pointerId);
+  });
+
+  rulerV.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    const rect = getSceneRect();
+    const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    beginInteraction();
+    state.interaction = { type: 'guide-create', axis: 'v' };
+    attachPointerHandlers(e.pointerId);
+  });
+}
+
+/* ============ BEZIER ============ */
 function cubicBezierPoint(p0, p1, p2, p3, t) {
   const mt = 1 - t, mt2 = mt*mt, t2 = t*t;
   return {
@@ -352,6 +423,7 @@ function cubicBezierPoint(p0, p1, p2, p3, t) {
 }
 function lerp2(p, q, t) { return { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t }; }
 
+/* ============ SUBPATHS ============ */
 function ensureSubpaths(node) {
   if (!node.subpaths) {
     if (node.anchors) node.subpaths = [{ anchors: node.anchors, closed: !!node.closed }];
@@ -409,8 +481,7 @@ function convertNodeToPath(nodeId) {
         makeAnchor(node.x, node.y), makeAnchor(node.x + node.w, node.y),
         makeAnchor(node.x + node.w, node.y + node.h), makeAnchor(node.x, node.y + node.h),
       ], closed: true }];
-      node.type = 'path';
-      delete node.corners;
+      node.type = 'path'; delete node.corners;
     } else if (node.type === 'ellipse') {
       const cx = node.x + node.w/2, cy = node.y + node.h/2;
       const rx = node.w/2, ry = node.h/2, k = 0.5522847498;
@@ -432,9 +503,7 @@ function convertNodeToPath(nodeId) {
   showToast('Converted to path');
 }
 
-/* ============================================================
-   COLOR / GRADIENT
-   ============================================================ */
+/* ============ COLOR / GRADIENT ============ */
 function normalizeHex(h) {
   if (!h) return '#000000';
   h = String(h).trim();
@@ -500,9 +569,7 @@ function schedulePropCommit() {
   }, 400);
 }
 
-/* ============================================================
-   SNAP
-   ============================================================ */
+/* ============ SNAP ============ */
 function findSnap(val, targets, threshold) {
   let best = null, bestDist = threshold;
   for (const t of targets) { const d = Math.abs(val - t); if (d < bestDist) { bestDist = d; best = t; } }
@@ -511,6 +578,11 @@ function findSnap(val, targets, threshold) {
 function computeSnapForBounds(b, excludeIds, threshold) {
   const xTargets = [0, state.doc.canvasW, state.doc.canvasW / 2];
   const yTargets = [0, state.doc.canvasH, state.doc.canvasH / 2];
+  // Guide targets
+  for (const g of (state.doc.guides || [])) {
+    if (g.axis === 'v') xTargets.push(g.pos);
+    else yTargets.push(g.pos);
+  }
   const pad = 200 / state.viewport.zoom;
   for (const n of state.doc.nodes) {
     if (excludeIds.has(n.id)) continue;
@@ -535,9 +607,7 @@ function computeSnapForBounds(b, excludeIds, threshold) {
   return { dx: snapDx, dy: snapDy, guideX, guideY };
 }
 
-/* ============================================================
-   EFFECTS
-   ============================================================ */
+/* ============ EFFECTS ============ */
 function hasEffects(node) {
   const fx = node.effects;
   return fx && ((fx.shadow && fx.shadow.on) || (fx.blur && fx.blur.on));
@@ -561,9 +631,181 @@ function buildFilterDef(node) {
   return `<filter id="${fid}" x="-50%" y="-50%" width="200%" height="200%">${parts.join('')}</filter>`;
 }
 
-/* ============================================================
-   POWERCLIP
-   ============================================================ */
+/* ============ MULTILINE TEXT + TEXT ON PATH ============ */
+function wrapLines(ctx2d, text, maxWidth) {
+  const out = [];
+  const paragraphs = String(text || '').split('\n');
+  for (const p of paragraphs) {
+    if (!p) { out.push(''); continue; }
+    const words = p.split(/(\s+)/);
+    let cur = '';
+    for (const w of words) {
+      const test = cur + w;
+      if (ctx2d.measureText(test).width > maxWidth && cur.trim()) {
+        out.push(cur);
+        cur = w.replace(/^\s+/, '');
+      } else cur = test;
+    }
+    if (cur) out.push(cur);
+  }
+  return out;
+}
+function drawTextLines(ctx2d, n) {
+  const fs = n.fontSize || 32;
+  const lh = (n.lineHeight || 1.2) * fs;
+  ctx2d.font = `${fs}px system-ui, sans-serif`;
+  ctx2d.textBaseline = 'alphabetic';
+  const fill = buildCanvasFillStyle(ctx2d, n);
+  const stroke = n.style?.stroke, sw = n.style?.strokeWidth || 0;
+  let lines, useWidth = false, align = n.align || 'left';
+  if (n.textBox && n.w > 0) { lines = wrapLines(ctx2d, n.text || '', n.w); useWidth = true; }
+  else lines = (n.text || '').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const lineY = n.y + fs + i * lh;
+    if (useWidth && lineY - fs > n.y + n.h) break;
+    const line = lines[i];
+    let tx = n.x;
+    if (useWidth && (align === 'center' || align === 'right')) {
+      const w = ctx2d.measureText(line).width;
+      if (align === 'center') tx = n.x + (n.w - w) / 2;
+      else tx = n.x + n.w - w;
+    }
+    if (fill) { ctx2d.fillStyle = fill; ctx2d.fillText(line, tx, lineY); }
+    if (stroke && sw > 0) { ctx2d.strokeStyle = stroke; ctx2d.lineWidth = sw; ctx2d.strokeText(line, tx, lineY); }
+  }
+}
+function buildPathSamples(subpaths) {
+  const samples = [];
+  let total = 0, prev = null;
+  for (const sp of subpaths) {
+    const anchors = sp.anchors;
+    if (anchors.length < 2) continue;
+    const segCount = sp.closed ? anchors.length : anchors.length - 1;
+    for (let i = 0; i < segCount; i++) {
+      const a = anchors[i], b = anchors[(i + 1) % anchors.length];
+      const N = Math.max(10, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 4));
+      for (let s = (i === 0 ? 0 : 1); s <= N; s++) {
+        const t = s / N;
+        const p = cubicBezierPoint(
+          { x: a.x, y: a.y }, { x: a.x + a.cOut.x, y: a.y + a.cOut.y },
+          { x: b.x + b.cIn.x, y: b.y + b.cIn.y }, { x: b.x, y: b.y }, t);
+        if (prev) total += Math.hypot(p.x - prev.x, p.y - prev.y);
+        samples.push({ p, d: total });
+        prev = p;
+      }
+    }
+  }
+  return { samples, total };
+}
+function drawTextOnPath(ctx2d, n) {
+  if (!n.attachedPath || !n.attachedPath.subpaths) return;
+  const { samples, total } = buildPathSamples(n.attachedPath.subpaths);
+  if (!samples.length || total < 1) return;
+  const fs = n.fontSize || 32;
+  ctx2d.font = `${fs}px system-ui, sans-serif`;
+  ctx2d.textBaseline = 'middle';
+  ctx2d.textAlign = 'left';
+  const fill = buildCanvasFillStyle(ctx2d, n);
+  if (!fill) return;
+  ctx2d.fillStyle = fill;
+  const text = n.text || '';
+  const offset = (n.pathStartOffset || 0) * total;
+  let dist = offset, si = 0;
+  for (const ch of text) {
+    if (ch === '\n') continue;
+    const w = ctx2d.measureText(ch).width;
+    if (dist + w > total) break;
+    while (si < samples.length - 1 && samples[si + 1].d < dist) si++;
+    const s0 = samples[si], s1 = samples[Math.min(si + 1, samples.length - 1)];
+    const segLen = s1.d - s0.d;
+    const t = segLen > 0.0001 ? (dist - s0.d) / segLen : 0;
+    const x = s0.p.x + (s1.p.x - s0.p.x) * t;
+    const y = s0.p.y + (s1.p.y - s0.p.y) * t;
+    const angle = Math.atan2(s1.p.y - s0.p.y, s1.p.x - s0.p.x);
+    ctx2d.save();
+    ctx2d.translate(x, y);
+    ctx2d.rotate(angle);
+    ctx2d.fillText(ch, 0, 0);
+    ctx2d.restore();
+    dist += w;
+  }
+}
+function attachTextToPath() {
+  const sel = [...state.selection].map(getNode).filter(Boolean);
+  const text = sel.find(n => n.type === 'text');
+  const path = sel.find(n => n.type === 'path');
+  if (!text || !path) { showToast('Select text + path'); return; }
+  commitChange(() => {
+    text.attachedPath = { subpaths: JSON.parse(JSON.stringify(path.subpaths)) };
+    const info = findNodeAndParent(path.id);
+    if (info) info.list.splice(info.index, 1);
+    state.selection = new Set([text.id]);
+  });
+  scheduleRender(); updateLayersPanel(); updatePropertiesPanel();
+  showToast('✓ Text attached to path');
+}
+function detachTextFromPath() {
+  const sel = [...state.selection].map(getNode).filter(n => n && n.attachedPath);
+  if (!sel.length) return;
+  commitChange(() => { for (const n of sel) delete n.attachedPath; });
+  scheduleRender(); updatePropertiesPanel();
+  showToast('✓ Text detached');
+}
+
+/* ============ CROP ============ */
+function enterCropMode(nodeId) {
+  const n = getNode(nodeId);
+  if (!n || n.type !== 'image') return;
+  const img = getImage(n.src);
+  if (!img.complete || !img.naturalWidth) { showToast('Image not ready'); return; }
+  const crop = n.crop || { x: 0, y: 0, w: 1, h: 1 };
+  const fullW = n.w / crop.w, fullH = n.h / crop.h;
+  const fullX = n.x - crop.x * fullW, fullY = n.y - crop.y * fullH;
+  state.cropping = {
+    nodeId,
+    origCrop: { ...crop },
+    origBounds: { x: n.x, y: n.y, w: n.w, h: n.h },
+    fullBounds: { x: fullX, y: fullY, w: fullW, h: fullH },
+    cropRect: { x: n.x, y: n.y, w: n.w, h: n.h },
+  };
+  scheduleRender();
+  showToast('Crop mode — drag handles, ✓ to apply');
+}
+function applyCrop() {
+  const c = state.cropping;
+  if (!c) return;
+  const n = getNode(c.nodeId);
+  if (!n) { state.cropping = null; scheduleRender(); return; }
+  commitChange(() => {
+    n.crop = {
+      x: (c.cropRect.x - c.fullBounds.x) / c.fullBounds.w,
+      y: (c.cropRect.y - c.fullBounds.y) / c.fullBounds.h,
+      w: c.cropRect.w / c.fullBounds.w,
+      h: c.cropRect.h / c.fullBounds.h,
+    };
+    n.x = c.cropRect.x; n.y = c.cropRect.y; n.w = c.cropRect.w; n.h = c.cropRect.h;
+  });
+  state.cropping = null;
+  scheduleRender(); updatePropertiesPanel();
+  showToast('✓ Image cropped');
+}
+function cancelCrop() { state.cropping = null; scheduleRender(); }
+function drawCroppingPreview(ctx2d, n) {
+  const c = state.cropping;
+  const fb = c.fullBounds;
+  const img = getImage(n.src);
+  if (img.complete && img.naturalWidth > 0) ctx2d.drawImage(img, fb.x, fb.y, fb.w, fb.h);
+  else { ctx2d.fillStyle = '#eee'; ctx2d.fillRect(fb.x, fb.y, fb.w, fb.h); }
+  ctx2d.save();
+  ctx2d.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx2d.beginPath();
+  ctx2d.rect(fb.x, fb.y, fb.w, fb.h);
+  ctx2d.rect(c.cropRect.x, c.cropRect.y, c.cropRect.w, c.cropRect.h);
+  ctx2d.fill('evenodd');
+  ctx2d.restore();
+}
+
+/* ============ POWERCLIP ============ */
 function createPowerClip() {
   const selIds = [...state.selection];
   if (selIds.length < 2) { showToast('Select 2+ objects'); return; }
@@ -597,7 +839,6 @@ function createPowerClip() {
   scheduleRender(); updateLayersPanel(); updatePropertiesPanel();
   showToast('✓ PowerClip created');
 }
-
 function enterPowerClipEdit(pcId) {
   const pc = getNode(pcId);
   if (!pc || pc.type !== 'powerclip') return;
@@ -610,9 +851,8 @@ function enterPowerClipEdit(pcId) {
   state.doc.nodes.splice(info.index + 1, 0, ...contents);
   state.selection = new Set(contents.map(c => c.id));
   scheduleRender(); updateLayersPanel(); updatePropertiesPanel();
-  showToast('✏️ Editing PowerClip — click ✓ when done');
+  showToast('✏️ Editing PowerClip');
 }
-
 function exitPowerClipEdit() {
   const pcId = state.editingPowerClip;
   if (!pcId) return;
@@ -632,7 +872,6 @@ function exitPowerClipEdit() {
   scheduleRender(); updateLayersPanel(); updatePropertiesPanel();
   showToast('✓ PowerClip updated');
 }
-
 function extractPowerClip() {
   const sel = [...state.selection].map(getNode).filter(n => n && n.type === 'powerclip');
   if (!sel.length) return;
@@ -654,14 +893,12 @@ function extractPowerClip() {
   scheduleRender(); updateLayersPanel(); updatePropertiesPanel();
   showToast('✓ Contents extracted');
 }
-
 function scaleFromSnapshot(live, orig, pcOrig, nx, ny, nw, nh) {
   const sx = pcOrig.w > 0 ? nw / pcOrig.w : 1;
   const sy = pcOrig.h > 0 ? nh / pcOrig.h : 1;
   live.x = nx + (orig.x - pcOrig.x) * sx;
   live.y = ny + (orig.y - pcOrig.y) * sy;
-  live.w = orig.w * sx;
-  live.h = orig.h * sy;
+  live.w = orig.w * sx; live.h = orig.h * sy;
   if (live.subpaths && orig.subpaths) {
     for (let si = 0; si < live.subpaths.length; si++)
       for (let ai = 0; ai < live.subpaths[si].anchors.length; ai++) {
@@ -683,9 +920,7 @@ function scaleFromSnapshot(live, orig, pcOrig, nx, ny, nw, nh) {
   }
 }
 
-/* ============================================================
-   CANVAS RENDER
-   ============================================================ */
+/* ============ CANVAS RENDER ============ */
 function applyNodeStyle(ctx2d, n) {
   const isDragged = state.dragging && state.draggingIds && state.draggingIds.has(n.id);
   const op = n.style?.opacity !== undefined ? n.style.opacity : 1;
@@ -702,8 +937,8 @@ function applyNodeStyle(ctx2d, n) {
   ctx2d.globalAlpha = op;
 }
 function resetCtxStyle(ctx2d) {
-  ctx2d.shadowColor = 'transparent';
-  ctx2d.shadowBlur = 0; ctx2d.shadowOffsetX = 0; ctx2d.shadowOffsetY = 0;
+  ctx2d.shadowColor = 'transparent'; ctx2d.shadowBlur = 0;
+  ctx2d.shadowOffsetX = 0; ctx2d.shadowOffsetY = 0;
   try { ctx2d.filter = 'none'; } catch {}
   ctx2d.globalAlpha = 1;
 }
@@ -758,8 +993,6 @@ function buildNodePath(ctx2d, node) {
     ctx2d.rect(node.x, node.y, Math.abs(node.w), Math.abs(node.h));
   }
 }
-
-// Paint path dengan fill + stroke konsisten
 function paintPath(ctx2d, n, pathObj) {
   const fill = buildCanvasFillStyle(ctx2d, n);
   const stroke = n.style?.stroke, sw = n.style?.strokeWidth || 0;
@@ -776,7 +1009,6 @@ function paintPath(ctx2d, n, pathObj) {
     ctx2d.stroke(pathObj);
   }
 }
-
 function drawPowerClip(ctx2d, n) {
   const container = n.container;
   if (!container) return;
@@ -811,7 +1043,6 @@ function drawPowerClip(ctx2d, n) {
     ctx2d.restore();
   }
 }
-
 function drawNode(ctx2d, n) {
   if (n.type === 'group') { for (const c of n.children) drawNode(ctx2d, c); return; }
   if (n.type === 'powerclip') { drawPowerClip(ctx2d, n); return; }
@@ -838,15 +1069,24 @@ function drawNode(ctx2d, n) {
     ctx2d.lineCap = 'round';
     ctx2d.stroke();
   } else if (n.type === 'text') {
-    const fs = n.fontSize || 32;
-    ctx2d.font = `${fs}px system-ui, sans-serif`;
-    ctx2d.textBaseline = 'alphabetic';
-    if (fillStyle) { ctx2d.fillStyle = fillStyle; ctx2d.fillText(n.text || '', n.x, n.y + fs); }
-    if (stroke && sw > 0) { ctx2d.strokeStyle = stroke; ctx2d.lineWidth = sw; ctx2d.strokeText(n.text || '', n.x, n.y + fs); }
+    if (n.attachedPath) drawTextOnPath(ctx2d, n);
+    else drawTextLines(ctx2d, n);
   } else if (n.type === 'image') {
-    const img = getImage(n.src);
-    if (img.complete && img.naturalWidth > 0) ctx2d.drawImage(img, n.x, n.y, Math.abs(n.w), Math.abs(n.h));
-    else { ctx2d.fillStyle = '#eee'; ctx2d.fillRect(n.x, n.y, Math.abs(n.w), Math.abs(n.h)); }
+    if (state.cropping && state.cropping.nodeId === n.id) {
+      drawCroppingPreview(ctx2d, n);
+    } else {
+      const img = getImage(n.src);
+      if (img.complete && img.naturalWidth > 0) {
+        const crop = n.crop || { x: 0, y: 0, w: 1, h: 1 };
+        const iw = img.naturalWidth, ih = img.naturalHeight;
+        ctx2d.drawImage(img,
+          iw * crop.x, ih * crop.y, iw * crop.w, ih * crop.h,
+          n.x, n.y, Math.abs(n.w), Math.abs(n.h));
+      } else {
+        ctx2d.fillStyle = '#eee';
+        ctx2d.fillRect(n.x, n.y, Math.abs(n.w), Math.abs(n.h));
+      }
+    }
   } else if (n.type === 'path') {
     paintPath(ctx2d, n, getPath2D(n));
   }
@@ -857,14 +1097,13 @@ function drawNode(ctx2d, n) {
 function render() {
   const rect = canvasArea.getBoundingClientRect();
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const w = Math.floor(rect.width * dpr), h = Math.floor(rect.height * dpr);
+  const sceneRect = scene.getBoundingClientRect();
+  const w = Math.floor(sceneRect.width * dpr), h = Math.floor(sceneRect.height * dpr);
   if (scene.width !== w || scene.height !== h) {
     scene.width = w; scene.height = h;
-    scene.style.width = rect.width + 'px';
-    scene.style.height = rect.height + 'px';
   }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, rect.width, rect.height);
+  ctx.clearRect(0, 0, sceneRect.width, sceneRect.height);
   ctx.save();
   ctx.translate(state.viewport.x, state.viewport.y);
   ctx.scale(state.viewport.zoom, state.viewport.zoom);
@@ -875,11 +1114,10 @@ function render() {
   ctx.strokeRect(0, 0, state.doc.canvasW, state.doc.canvasH);
   for (const n of state.doc.nodes) drawNode(ctx, n);
   ctx.restore();
+  drawRulers();
 }
 
-/* ============================================================
-   HIT TESTING
-   ============================================================ */
+/* ============ HIT TESTING ============ */
 function hitTest(wx, wy) {
   for (let i = state.doc.nodes.length - 1; i >= 0; i--) {
     const id = hitTestNode(state.doc.nodes[i], wx, wy);
@@ -895,6 +1133,12 @@ function hitTestNode(n, wx, wy) {
   if (n.type === 'powerclip') {
     if (state.editingPowerClip === n.id) return null;
     return (n.container && hitTestNode(n.container, wx, wy)) ? n.id : null;
+  }
+  if (n.type === 'text' && n.attachedPath) {
+    const b = computePathBounds({ subpaths: n.attachedPath.subpaths });
+    if (wx < b.x - 30 || wx > b.x + b.w + 30) return null;
+    if (wy < b.y - 40 || wy > b.y + b.h + 40) return null;
+    return n.id;
   }
   const b = getNodeBounds(n);
   if (wx < b.x - 4 || wx > b.x + b.w + 4) return null;
@@ -918,9 +1162,7 @@ function hitTestNode(n, wx, wy) {
   } else if (n.type === 'path') {
     const path = getPath2D(n), hc = getHitCtx();
     hc.setTransform(1, 0, 0, 1, 0, 0);
-    hc.translate(cx, cy);
-    hc.rotate(rot);
-    hc.translate(-cx, -cy);
+    hc.translate(cx, cy); hc.rotate(rot); hc.translate(-cx, -cy);
     if (getSubpaths(n).some(sp => sp.closed) && n.style?.fill && n.style?.fill !== 'none' && hc.isPointInPath(path, wx, wy)) return n.id;
     hc.lineWidth = Math.max((n.style?.strokeWidth || 0) + 6, 10);
     if (hc.isPointInStroke(path, wx, wy)) return n.id;
@@ -935,39 +1177,21 @@ function pointToSegmentDist(px, py, x1, y1, x2, y2) {
   return Math.hypot(px - (x1 + t*dx), py - (y1 + t*dy));
 }
 
-/* ============================================================
-   SVG OVERLAY BUILDERS
-   ============================================================ */
+/* ============ OVERLAY ============ */
 function handleRect(pos, px, py, id, hs, hitHs, zoom) {
-  return `<g>
-    <rect data-handle="${pos}" data-id="${id}"
-      x="${px-hitHs}" y="${py-hitHs}" width="${hitHs*2}" height="${hitHs*2}"
-      fill="transparent" stroke="none" pointer-events="all"
-      style="cursor:${pos}-resize"/>
-    <rect x="${px-hs}" y="${py-hs}" width="${hs*2}" height="${hs*2}"
-      fill="white" stroke="#0af" stroke-width="${1/zoom}" pointer-events="none"/>
-  </g>`;
+  return `<g><rect data-handle="${pos}" data-id="${id}" x="${px-hitHs}" y="${py-hitHs}" width="${hitHs*2}" height="${hitHs*2}" fill="transparent" stroke="none" pointer-events="all" style="cursor:${pos}-resize"/><rect x="${px-hs}" y="${py-hs}" width="${hs*2}" height="${hs*2}" fill="white" stroke="#0af" stroke-width="${1/zoom}" pointer-events="none"/></g>`;
 }
 function anchorCircle(nodeId, si, ai, a, opts) {
   const { isSel, isPenFirst, hitRadius, visSize, lineW } = opts;
-  return `<circle data-path-id="${nodeId}" data-subpath-index="${si}" data-anchor-index="${ai}"
-      cx="${a.x}" cy="${a.y}" r="${hitRadius}" fill="transparent" pointer-events="all" style="cursor:move"/>
-    <circle cx="${a.x}" cy="${a.y}" r="${visSize}"
-      fill="${isSel ? '#0af' : (isPenFirst ? '#4ecdc4' : 'white')}"
-      stroke="${isSel ? '#0066aa' : '#0af'}" stroke-width="${lineW}" pointer-events="none"/>`;
+  return `<circle data-path-id="${nodeId}" data-subpath-index="${si}" data-anchor-index="${ai}" cx="${a.x}" cy="${a.y}" r="${hitRadius}" fill="transparent" pointer-events="all" style="cursor:move"/><circle cx="${a.x}" cy="${a.y}" r="${visSize}" fill="${isSel ? '#0af' : (isPenFirst ? '#4ecdc4' : 'white')}" stroke="${isSel ? '#0066aa' : '#0af'}" stroke-width="${lineW}" pointer-events="none"/>`;
 }
 function controlHandle(nodeId, si, ai, a, side, cSize, cHit, lineW) {
   const cx = a.x + (side === 'in' ? a.cIn.x : a.cOut.x);
   const cy = a.y + (side === 'in' ? a.cIn.y : a.cOut.y);
-  return `<line x1="${a.x}" y1="${a.y}" x2="${cx}" y2="${cy}"
-      stroke="#ff8800" stroke-width="${lineW}" pointer-events="none"/>
-    <circle data-path-id="${nodeId}" data-subpath-index="${si}" data-handle-index="${ai}" data-handle-side="${side}"
-      cx="${cx}" cy="${cy}" r="${cHit}" fill="transparent" pointer-events="all" style="cursor:grab"/>
-    <circle cx="${cx}" cy="${cy}" r="${cSize}" fill="#ff8800" stroke="white" stroke-width="${lineW}" pointer-events="none"/>`;
+  return `<line x1="${a.x}" y1="${a.y}" x2="${cx}" y2="${cy}" stroke="#ff8800" stroke-width="${lineW}" pointer-events="none"/><circle data-path-id="${nodeId}" data-subpath-index="${si}" data-handle-index="${ai}" data-handle-side="${side}" cx="${cx}" cy="${cy}" r="${cHit}" fill="transparent" pointer-events="all" style="cursor:grab"/><circle cx="${cx}" cy="${cy}" r="${cSize}" fill="#ff8800" stroke="white" stroke-width="${lineW}" pointer-events="none"/>`;
 }
-
 function drawSelectionOverlay(n) {
-  const { x, y, zoom } = state.viewport;
+  const { zoom } = state.viewport;
   const offset = 8 / zoom, sw = 1.5 / zoom;
   const hs = getHandleScreenPx() / (2 * zoom);
   const hitHs = getHandleHitPx() / (2 * zoom);
@@ -979,10 +1203,15 @@ function drawSelectionOverlay(n) {
   if (isGroupOrPC) {
     const b = getNodeBounds(n);
     const stroke = n.type === 'powerclip' ? '#ff8800' : '#0af';
-    return `<rect x="${b.x-offset}" y="${b.y-offset}" width="${b.w+2*offset}" height="${b.h+2*offset}"
-      fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-dasharray="${6/zoom} ${3/zoom}" pointer-events="none"/>`;
+    return `<rect x="${b.x-offset}" y="${b.y-offset}" width="${b.w+2*offset}" height="${b.h+2*offset}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-dasharray="${6/zoom} ${3/zoom}" pointer-events="none"/>`;
   }
   if (isEditing) return '';
+
+  // Text on path
+  if (n.type === 'text' && n.attachedPath) {
+    const b = computePathBounds({ subpaths: n.attachedPath.subpaths });
+    return `<rect x="${b.x-offset}" y="${b.y-offset}" width="${b.w+2*offset}" height="${b.h+2*offset}" fill="none" stroke="#ff8800" stroke-width="${sw}" stroke-dasharray="${4/zoom} ${2/zoom}" pointer-events="none"/>`;
+  }
 
   const { x: nx, y: ny, w, h, rotation } = n;
   const cx = nx + w/2, cy = ny + h/2;
@@ -991,11 +1220,7 @@ function drawSelectionOverlay(n) {
   const ow = w + 2*offset, oh = h + 2*offset;
 
   if (isMulti) {
-    return `<g transform="${rtf}">
-      <rect x="${ox}" y="${oy}" width="${ow}" height="${oh}"
-        fill="none" stroke="#0af" stroke-width="${sw}"
-        stroke-dasharray="${4/zoom} ${2/zoom}" pointer-events="none"/>
-    </g>`;
+    return `<g transform="${rtf}"><rect x="${ox}" y="${oy}" width="${ow}" height="${oh}" fill="none" stroke="#0af" stroke-width="${sw}" stroke-dasharray="${4/zoom} ${2/zoom}" pointer-events="none"/></g>`;
   }
 
   const isPath = n.type === 'path';
@@ -1007,22 +1232,8 @@ function drawSelectionOverlay(n) {
   const handles = isPath ? '' : pts.map(([pos, px, py]) => handleRect(pos, px, py, n.id, hs, hitHs, zoom)).join('');
   const rotY = oy - 16/zoom;
   const color = isPath ? '#ff8800' : '#0af';
-  return `<g transform="${rtf}">
-    <rect x="${ox}" y="${oy}" width="${ow}" height="${oh}"
-      fill="none" stroke="${color}" stroke-width="${sw}" pointer-events="none"/>
-    ${handles}
-    <line x1="${ox + ow/2}" y1="${oy}" x2="${ox + ow/2}" y2="${rotY}"
-      stroke="${color}" stroke-width="${sw}" pointer-events="none"/>
-    <g>
-      <circle data-handle="rotate" data-id="${n.id}"
-        cx="${ox + ow/2}" cy="${rotY}" r="${hitHs}"
-        fill="transparent" stroke="none" pointer-events="all" style="cursor:grab"/>
-      <circle cx="${ox + ow/2}" cy="${rotY}" r="${hs}"
-        fill="white" stroke="${color}" stroke-width="${1/zoom}" pointer-events="none"/>
-    </g>
-  </g>`;
+  return `<g transform="${rtf}"><rect x="${ox}" y="${oy}" width="${ow}" height="${oh}" fill="none" stroke="${color}" stroke-width="${sw}" pointer-events="none"/>${handles}<line x1="${ox + ow/2}" y1="${oy}" x2="${ox + ow/2}" y2="${rotY}" stroke="${color}" stroke-width="${sw}" pointer-events="none"/><g><circle data-handle="rotate" data-id="${n.id}" cx="${ox + ow/2}" cy="${rotY}" r="${hitHs}" fill="transparent" stroke="none" pointer-events="all" style="cursor:grab"/><circle cx="${ox + ow/2}" cy="${rotY}" r="${hs}" fill="white" stroke="${color}" stroke-width="${1/zoom}" pointer-events="none"/></g></g>`;
 }
-
 function drawAnchorOverlay(node) {
   const { zoom } = state.viewport;
   const cx = node.x + node.w/2, cy = node.y + node.h/2;
@@ -1054,11 +1265,9 @@ function drawAnchorOverlay(node) {
   content += '</g>';
   return content;
 }
-
 function shouldShowAnchors(node) {
   return node.type === 'path' && (state.pathEditing === node.id || (state.pen.active && state.pen.nodeId === node.id));
 }
-
 function renderOverlay() {
   const isPureViewportChange = (state.interaction && state.interaction.type === 'pan') || pinchState;
   if (isPureViewportChange) {
@@ -1076,6 +1285,7 @@ function renderOverlay() {
 
   for (const n of selected) {
     if (state.pen.active && state.pen.nodeId === n.id) continue;
+    if (state.cropping && state.cropping.nodeId === n.id) continue;
     content += drawSelectionOverlay(n);
   }
   for (const n of state.doc.nodes) {
@@ -1088,29 +1298,52 @@ function renderOverlay() {
       const sp = getSubpaths(node)[0];
       if (sp && sp.anchors.length > 0) {
         const last = sp.anchors[sp.anchors.length-1];
-        content += `<line x1="${last.x}" y1="${last.y}" x2="${state.pen.mousePos.x}" y2="${state.pen.mousePos.y}"
-          stroke="#0af" stroke-width="${1.5/zoom}" stroke-dasharray="${4/zoom} ${3/zoom}" pointer-events="none" opacity="0.7"/>`;
+        content += `<line x1="${last.x}" y1="${last.y}" x2="${state.pen.mousePos.x}" y2="${state.pen.mousePos.y}" stroke="#0af" stroke-width="${1.5/zoom}" stroke-dasharray="${4/zoom} ${3/zoom}" pointer-events="none" opacity="0.7"/>`;
       }
     }
   }
   if (marqueeRect) {
     const { x1, y1, x2, y2 } = marqueeRect;
-    content += `<rect x="${Math.min(x1,x2)}" y="${Math.min(y1,y2)}" width="${Math.abs(x2-x1)}" height="${Math.abs(y2-y1)}"
-      fill="rgba(0,170,255,0.08)" stroke="#0af" stroke-width="${sw}" stroke-dasharray="${4/zoom} ${2/zoom}" pointer-events="none"/>`;
+    content += `<rect x="${Math.min(x1,x2)}" y="${Math.min(y1,y2)}" width="${Math.abs(x2-x1)}" height="${Math.abs(y2-y1)}" fill="rgba(0,170,255,0.08)" stroke="#0af" stroke-width="${sw}" stroke-dasharray="${4/zoom} ${2/zoom}" pointer-events="none"/>`;
   }
   if (state.snapGuides) {
     const sg = state.snapGuides, dash = `${6/zoom} ${4/zoom}`;
     if (sg.guideX != null) content += `<line x1="${sg.guideX}" y1="-10000" x2="${sg.guideX}" y2="10000" stroke="#ff00ff" stroke-width="${1.5/zoom}" stroke-dasharray="${dash}" pointer-events="none" opacity="0.85"/>`;
     if (sg.guideY != null) content += `<line x1="-10000" y1="${sg.guideY}" x2="10000" y2="${sg.guideY}" stroke="#ff00ff" stroke-width="${1.5/zoom}" stroke-dasharray="${dash}" pointer-events="none" opacity="0.85"/>`;
   }
+
+  // Guides
+  const guides = state.doc.guides || [];
+  for (const g of guides) {
+    if (g.axis === 'v') {
+      content += `<g data-guide-id="${g.id}"><line x1="${g.pos}" y1="-10000" x2="${g.pos}" y2="10000" stroke="transparent" stroke-width="${12/zoom}" pointer-events="stroke" style="cursor:ew-resize"/><line x1="${g.pos}" y1="-10000" x2="${g.pos}" y2="10000" stroke="#0af" stroke-width="${1/zoom}" stroke-dasharray="4 3" pointer-events="none"/></g>`;
+    } else {
+      content += `<g data-guide-id="${g.id}"><line x1="-10000" y1="${g.pos}" x2="10000" y2="${g.pos}" stroke="transparent" stroke-width="${12/zoom}" pointer-events="stroke" style="cursor:ns-resize"/><line x1="-10000" y1="${g.pos}" x2="10000" y2="${g.pos}" stroke="#0af" stroke-width="${1/zoom}" stroke-dasharray="4 3" pointer-events="none"/></g>`;
+    }
+  }
+
+  // Crop handles
+  if (state.cropping) {
+    const cr = state.cropping.cropRect;
+    const hs = 6 / zoom, hitHs = 18 / zoom;
+    content += `<rect x="${cr.x}" y="${cr.y}" width="${cr.w}" height="${cr.h}" fill="none" stroke="white" stroke-width="${2/zoom}" pointer-events="none"/>`;
+    const handles = [
+      ['nw', cr.x, cr.y], ['n', cr.x + cr.w/2, cr.y], ['ne', cr.x + cr.w, cr.y],
+      ['w', cr.x, cr.y + cr.h/2], ['e', cr.x + cr.w, cr.y + cr.h/2],
+      ['sw', cr.x, cr.y + cr.h], ['s', cr.x + cr.w/2, cr.y + cr.h], ['se', cr.x + cr.w, cr.y + cr.h],
+    ];
+    for (const [pos, px, py] of handles) {
+      content += `<g><rect data-crop-handle="${pos}" x="${px-hitHs}" y="${py-hitHs}" width="${hitHs*2}" height="${hitHs*2}" fill="transparent" pointer-events="all" style="cursor:${pos}-resize"/><rect x="${px-hs}" y="${py-hs}" width="${hs*2}" height="${hs*2}" fill="white" stroke="black" stroke-width="${1/zoom}" pointer-events="none"/></g>`;
+    }
+  }
+
   overlay.innerHTML = `<g transform="${viewportMatrix()}">${content}</g>`;
   updateFloatingToolbar();
 }
 
-/* ============================================================
-   FLOATING TOOLBAR
-   ============================================================ */
+/* ============ FLOATING TOOLBAR ============ */
 function toolbarSignature() {
+  if (state.cropping) return 'crop';
   if (state.pen.active) {
     const node = getNode(state.pen.nodeId);
     const sp = node ? getSubpaths(node)[0] : null;
@@ -1123,6 +1356,7 @@ function toolbarSignature() {
   const sel = [...state.selection].map(getNode).filter(Boolean);
   if (sel.length === 1 && sel[0].type === 'path') return `sel:${sel[0].id}`;
   if (sel.length === 1 && sel[0].type === 'powerclip') return `pc:${sel[0].id}`;
+  if (sel.length === 1 && sel[0].type === 'text' && sel[0].attachedPath) return `text-path:${sel[0].id}`;
   return 'none';
 }
 function addToolbarButton(label, title, action, active) {
@@ -1135,6 +1369,12 @@ function addToolbarButton(label, title, action, active) {
 }
 function rebuildFloatingToolbar() {
   floatingToolbar.innerHTML = '';
+  if (state.cropping) {
+    addToolbarButton('✓', 'Apply crop', applyCrop);
+    addToolbarButton('✕', 'Cancel crop', cancelCrop);
+    floatingToolbar.style.display = 'flex';
+    return;
+  }
   if (state.pen.active) {
     const node = getNode(state.pen.nodeId);
     const sp = node ? getSubpaths(node)[0] : null;
@@ -1192,24 +1432,28 @@ function rebuildFloatingToolbar() {
     addToolbarButton('📤', 'Extract', () => extractPowerClip());
     floatingToolbar.style.display = 'flex'; return;
   }
+  if (sel.length === 1 && sel[0].type === 'text' && sel[0].attachedPath) {
+    addToolbarButton('✂️', 'Detach from path', () => detachTextFromPath());
+    floatingToolbar.style.display = 'flex'; return;
+  }
   floatingToolbar.style.display = 'none';
 }
 function repositionFloatingToolbar() {
   if (floatingToolbar.style.display === 'none') return;
   const areaRect = canvasArea.getBoundingClientRect();
   const tw = floatingToolbar.offsetWidth || 100, th = floatingToolbar.offsetHeight || 44;
-  if (state.pen.active || state.pathEditing || state.editingPowerClip) {
+  if (state.pen.active || state.pathEditing || state.editingPowerClip || state.cropping) {
     floatingToolbar.style.transform = 'translate(-50%, 0)';
     floatingToolbar.style.left = (areaRect.width / 2) + 'px';
-    floatingToolbar.style.top = '14px';
+    floatingToolbar.style.top = '30px';
     return;
   }
   const sel = [...state.selection].map(getNode).filter(Boolean);
-  if (sel.length === 1 && (sel[0].type === 'path' || sel[0].type === 'powerclip')) {
+  if (sel.length === 1 && (sel[0].type === 'path' || sel[0].type === 'powerclip' || (sel[0].type === 'text' && sel[0].attachedPath))) {
     const b = getNodeBounds(sel[0]);
     const center = worldToScreen(b.x + b.w / 2, b.y + b.h);
-    let sx = Math.max(tw / 2 + 8, Math.min(areaRect.width - tw / 2 - 8, center.x));
-    let sy = Math.max(8, Math.min(areaRect.height - th - 8, center.y + 18));
+    let sx = Math.max(tw / 2 + 8, Math.min(areaRect.width - tw / 2 - 8, center.x + 22));
+    let sy = Math.max(30, Math.min(areaRect.height - th - 8, center.y + 40));
     floatingToolbar.style.transform = 'translate(-50%, 0)';
     floatingToolbar.style.left = sx + 'px';
     floatingToolbar.style.top = sy + 'px';
@@ -1221,9 +1465,7 @@ function updateFloatingToolbar() {
   repositionFloatingToolbar();
 }
 
-/* ============================================================
-   ANCHOR OPS
-   ============================================================ */
+/* ============ ANCHOR OPS ============ */
 function isAnchorSmooth(node, si, ai) {
   const sp = getSubpaths(node)[si];
   const a = sp && sp.anchors[ai];
@@ -1277,18 +1519,14 @@ function deleteSelectedAnchor() {
   scheduleRender(); updateLayersPanel(); updatePropertiesPanel();
 }
 
-/* ============================================================
-   BOOLEAN
-   ============================================================ */
+/* ============ BOOLEAN ============ */
 function shapeToPolygon(node, samples = 20) {
   if (node.type === 'rect') {
     const c = node.corners || {};
     if (c.tl || c.tr || c.br || c.bl) {
       const tempPath = { ...node, type: 'path', subpaths: [{
         anchors: [makeAnchor(node.x, node.y), makeAnchor(node.x+node.w, node.y),
-                  makeAnchor(node.x+node.w, node.y+node.h), makeAnchor(node.x, node.y+node.h)],
-        closed: true,
-      }]};
+                  makeAnchor(node.x+node.w, node.y+node.h), makeAnchor(node.x, node.y+node.h)], closed: true }]};
       return pathToPolygon(tempPath, samples);
     }
     return [[[node.x, node.y], [node.x+node.w, node.y], [node.x+node.w, node.y+node.h], [node.x, node.y+node.h]]];
@@ -1368,12 +1606,8 @@ async function doBoolean(op) {
       const info = findNodeAndParent(id);
       if (info) info.list.splice(info.index, 1);
     }
-    const newNode = {
-      id: genId(), type: 'path', name: capitalize(op),
-      subpaths, fillRule: 'evenodd',
-      x: 0, y: 0, w: 0, h: 0, rotation: 0,
-      style: firstStyle,
-    };
+    const newNode = { id: genId(), type: 'path', name: capitalize(op),
+      subpaths, fillRule: 'evenodd', x: 0, y: 0, w: 0, h: 0, rotation: 0, style: firstStyle };
     syncPathBounds(newNode);
     state.doc.nodes.push(newNode);
     state.selection = new Set([newNode.id]);
@@ -1385,9 +1619,7 @@ document.querySelectorAll('[data-bool]').forEach(btn => {
   btn.addEventListener('click', () => doBoolean(btn.dataset.bool).catch(() => showToast('Boolean failed')));
 });
 
-/* ============================================================
-   HISTORY
-   ============================================================ */
+/* ============ HISTORY ============ */
 function beginInteraction() { state.snapshotBefore = JSON.stringify(state.doc); }
 function endInteraction() {
   if (state.snapshotBefore === null) return;
@@ -1417,6 +1649,7 @@ function resetAfterHistory() {
   state.pen = { active: false, nodeId: null, dragAnchorIndex: -1, mousePos: null, dragging: false };
   state.editingPowerClip = null;
   state._editingContentsIds = null;
+  state.cropping = null;
 }
 function undo() {
   if (!state.history.undo.length) return;
@@ -1442,9 +1675,7 @@ function updateHistoryButtons() {
   document.getElementById('btnRedo').disabled = state.history.redo.length === 0;
 }
 
-/* ============================================================
-   COPY / PASTE
-   ============================================================ */
+/* ============ COPY / PASTE ============ */
 function deepCloneWithNewIds(node) {
   const clone = JSON.parse(JSON.stringify(node));
   function reassign(n) {
@@ -1532,9 +1763,7 @@ function reorderSelection(front) {
 const bringToFront = () => reorderSelection(true);
 const sendToBack = () => reorderSelection(false);
 
-/* ============================================================
-   CONTEXT MENU
-   ============================================================ */
+/* ============ CONTEXT MENU ============ */
 function showContextMenu(x, y, targetNodeId) {
   closeAllMenus();
   const menu = document.createElement('div');
@@ -1549,6 +1778,11 @@ function showContextMenu(x, y, targetNodeId) {
     items.push({ sep: true });
     if (sel.length >= 2) {
       items.push({ label: '📦 Create PowerClip', action: createPowerClip });
+      const hasText = sel.some(x => x.type === 'text');
+      const hasPath = sel.some(x => x.type === 'path');
+      if (hasText && hasPath && sel.length === 2) {
+        items.push({ label: '✏️ Attach text to path', action: attachTextToPath });
+      }
       items.push({ sep: true });
       items.push({ label: '∪ Union', action: boolAction('union') });
       items.push({ label: '− Subtract', action: boolAction('subtract') });
@@ -1563,6 +1797,14 @@ function showContextMenu(x, y, targetNodeId) {
         items.push({ label: '✏️ Edit contents', action: () => enterPowerClipEdit(pcId) });
         items.push({ label: '📤 Extract contents', action: extractPowerClip });
       }
+      items.push({ sep: true });
+    }
+    if (sel.length === 1 && sel[0].type === 'text' && sel[0].attachedPath) {
+      items.push({ label: '✂️ Detach from path', action: detachTextFromPath });
+      items.push({ sep: true });
+    }
+    if (sel.length === 1 && sel[0].type === 'image') {
+      items.push({ label: '✂️ Crop image', action: () => enterCropMode(sel[0].id) });
       items.push({ sep: true });
     }
     items.push({ label: '⬆ Bring to Front', action: bringToFront });
@@ -1645,9 +1887,7 @@ scene.addEventListener('pointermove', (e) => {
   scene.addEventListener(evt, () => clearTimeout(longPressTimer));
 });
 
-/* ============================================================
-   PINCH ZOOM
-   ============================================================ */
+/* ============ PINCH ZOOM ============ */
 function onCanvasPointerDown(e) {
   touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (touchPointers.size === 2) {
@@ -1690,9 +1930,7 @@ function onCanvasPointerUp(e) {
   if (touchPointers.size < 2) pinchState = null;
 }
 
-/* ============================================================
-   PEN TOOL
-   ============================================================ */
+/* ============ PEN TOOL ============ */
 function onPenPointerDown(e, world) {
   if (!state.pen.active) {
     beginInteraction();
@@ -1765,13 +2003,9 @@ function cancelPenPath() {
   resetPen(); state.snapshotBefore = null; state.selection.clear();
   scheduleRender(); updateLayersPanel(); updatePropertiesPanel();
 }
-function resetPen() {
-  state.pen = { active: false, nodeId: null, dragAnchorIndex: -1, mousePos: null, dragging: false };
-}
+function resetPen() { state.pen = { active: false, nodeId: null, dragAnchorIndex: -1, mousePos: null, dragging: false }; }
 
-/* ============================================================
-   POINTER
-   ============================================================ */
+/* ============ POINTER ============ */
 function onScenePointerDown(e) {
   if (pinchState || e.button !== 0) return;
   e.preventDefault();
@@ -1780,6 +2014,17 @@ function onScenePointerDown(e) {
 
   if (state.tool === 'hand') { startPan(e); return; }
   if (state.tool === 'pen') { onPenPointerDown(e, world); attachPointerHandlers(e.pointerId); return; }
+
+  // Crop mode drag inside
+  if (state.cropping) {
+    const cr = state.cropping.cropRect;
+    if (world.x >= cr.x && world.x <= cr.x + cr.w && world.y >= cr.y && world.y <= cr.y + cr.h) {
+      beginInteraction();
+      state.interaction = { type: 'crop-move', startRect: { ...cr }, startPointer: world };
+      attachPointerHandlers(e.pointerId);
+    }
+    return;
+  }
 
   if (state.pathEditing) {
     const hitId = hitTest(world.x, world.y);
@@ -1846,10 +2091,7 @@ function onScenePointerDown(e) {
       state.selection.clear();
       scheduleRender(); updatePropertiesPanel(); updateLayersPanel();
     }
-    state.interaction = {
-      type: 'marquee', start: world, additive: e.shiftKey,
-      originalSelection: new Set(state.selection),
-    };
+    state.interaction = { type: 'marquee', start: world, additive: e.shiftKey, originalSelection: new Set(state.selection) };
     marqueeRect = { x1: world.x, y1: world.y, x2: world.x, y2: world.y };
     attachPointerHandlers(e.pointerId);
   }
@@ -1889,6 +2131,36 @@ function insertAnchorAtPoint(node, si, segIndex, t) {
 function onOverlayPointerDown(e) {
   if (pinchState) return;
   const d = e.target.dataset || {};
+
+  // Guide drag
+  const guideEl = e.target.closest('[data-guide-id]');
+  if (guideEl) {
+    e.preventDefault(); e.stopPropagation();
+    const g = (state.doc.guides || []).find(x => x.id === guideEl.dataset.guideId);
+    if (!g) return;
+    const rect = getSceneRect();
+    const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    beginInteraction();
+    state.interaction = { type: 'guide-drag', guideId: g.id, axis: g.axis, startPos: g.pos, startPointer: world };
+    attachPointerHandlers(e.pointerId);
+    return;
+  }
+
+  // Crop handle
+  if (d.cropHandle && state.cropping) {
+    e.preventDefault(); e.stopPropagation();
+    const rect = getSceneRect();
+    const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    beginInteraction();
+    state.interaction = {
+      type: 'crop-resize', handle: d.cropHandle,
+      startRect: { ...state.cropping.cropRect },
+      startPointer: world,
+    };
+    attachPointerHandlers(e.pointerId);
+    return;
+  }
+
   const { anchorIndex: anchorIdx, handleIndex: handleIdx, handleSide, subpathIndex: subpathIdx, pathId, handle, id: nodeId } = d;
 
   if (anchorIdx !== undefined && pathId) {
@@ -1907,10 +2179,7 @@ function onOverlayPointerDown(e) {
     const rect = getSceneRect();
     const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
     beginInteraction();
-    state.interaction = {
-      type: 'anchor-drag', nodeId: pathId, subpathIndex: si, anchorIndex: ai,
-      startPointer: world, startAnchor: { x: a.x, y: a.y },
-    };
+    state.interaction = { type: 'anchor-drag', nodeId: pathId, subpathIndex: si, anchorIndex: ai, startPointer: world, startAnchor: { x: a.x, y: a.y } };
     attachPointerHandlers(e.pointerId);
     scheduleRender();
     return;
@@ -1920,12 +2189,7 @@ function onOverlayPointerDown(e) {
     const node = getNode(pathId);
     if (!node || node.type !== 'path') return;
     beginInteraction();
-    state.interaction = {
-      type: 'handle-drag', nodeId: pathId,
-      subpathIndex: parseInt(subpathIdx || 0),
-      anchorIndex: parseInt(handleIdx),
-      side: handleSide, symmetric: !e.altKey,
-    };
+    state.interaction = { type: 'handle-drag', nodeId: pathId, subpathIndex: parseInt(subpathIdx || 0), anchorIndex: parseInt(handleIdx), side: handleSide, symmetric: !e.altKey };
     attachPointerHandlers(e.pointerId);
     return;
   }
@@ -1938,45 +2202,31 @@ function onOverlayPointerDown(e) {
   beginInteraction();
   if (handle === 'rotate') {
     const cx = node.x + node.w/2, cy = node.y + node.h/2;
-    state.interaction = { type: 'rotate', nodeId, cx, cy,
-      startAngle: Math.atan2(world.y - cy, world.x - cx), startRotation: node.rotation || 0 };
+    state.interaction = { type: 'rotate', nodeId, cx, cy, startAngle: Math.atan2(world.y - cy, world.x - cx), startRotation: node.rotation || 0 };
   } else {
     const cx = node.x + node.w/2, cy = node.y + node.h/2;
     const rad = (node.rotation || 0) * Math.PI / 180;
     const cos = Math.cos(rad), sin = Math.sin(rad);
     const fixedLocal = {
-      nw: { x: node.x + node.w, y: node.y + node.h },
-      n:  { x: node.x + node.w/2, y: node.y + node.h },
-      ne: { x: node.x, y: node.y + node.h },
-      w:  { x: node.x + node.w, y: node.y + node.h/2 },
-      e:  { x: node.x, y: node.y + node.h/2 },
-      sw: { x: node.x + node.w, y: node.y },
-      s:  { x: node.x + node.w/2, y: node.y },
-      se: { x: node.x, y: node.y },
+      nw: { x: node.x + node.w, y: node.y + node.h }, n: { x: node.x + node.w/2, y: node.y + node.h },
+      ne: { x: node.x, y: node.y + node.h }, w: { x: node.x + node.w, y: node.y + node.h/2 },
+      e: { x: node.x, y: node.y + node.h/2 }, sw: { x: node.x + node.w, y: node.y },
+      s: { x: node.x + node.w/2, y: node.y }, se: { x: node.x, y: node.y },
     }[handle];
-    state.interaction = { type: 'resize', nodeId, handle,
-      startNode: JSON.parse(JSON.stringify(node)), startPointer: world,
-      cx, cy, cos, sin,
-      fixedWorld: localToWorld(fixedLocal.x, fixedLocal.y, cx, cy, cos, sin) };
+    state.interaction = { type: 'resize', nodeId, handle, startNode: JSON.parse(JSON.stringify(node)), startPointer: world,
+      cx, cy, cos, sin, fixedWorld: localToWorld(fixedLocal.x, fixedLocal.y, cx, cy, cos, sin) };
   }
   attachPointerHandlers(e.pointerId);
 }
 
 function startPan(e) {
-  state.interaction = {
-    type: 'pan',
-    startScreen: { x: e.clientX, y: e.clientY },
-    startVp: { x: state.viewport.x, y: state.viewport.y },
-  };
+  state.interaction = { type: 'pan', startScreen: { x: e.clientX, y: e.clientY }, startVp: { x: state.viewport.x, y: state.viewport.y } };
   attachPointerHandlers(e.pointerId);
 }
 function startDraw(tool, world) {
   beginInteraction();
   const id = genId();
-  const node = {
-    id, type: tool, x: world.x, y: world.y, w: 0, h: 0, rotation: 0,
-    style: { ...state.defaultStyle },
-  };
+  const node = { id, type: tool, x: world.x, y: world.y, w: 0, h: 0, rotation: 0, style: { ...state.defaultStyle } };
   if (tool === 'rect') node.corners = { tl: 0, tr: 0, br: 0, bl: 0 };
   if (tool === 'text') { node.text = 'Text'; node.fontSize = 32; }
   state.doc.nodes.push(node);
@@ -1993,7 +2243,6 @@ function attachPointerHandlers(pointerId) {
   document.addEventListener('pointercancel', onPointerUp, { signal: pointerAbort.signal });
 }
 
-// Helpers untuk resize: clamp + fixed corner
 function applyResizeDeltas(handle, n, dLocal) {
   let nx = n.x, ny = n.y, nw = n.w, nh = n.h;
   switch (handle) {
@@ -2006,8 +2255,7 @@ function applyResizeDeltas(handle, n, dLocal) {
     case 'sw': nx += dLocal.x; nw -= dLocal.x; nh += dLocal.y; break;
     case 'se': nw += dLocal.x; nh += dLocal.y; break;
   }
-  if (state.aspectLocked && n.w > 0 && n.h > 0 &&
-      ['nw','ne','sw','se'].includes(handle)) {
+  if (state.aspectLocked && n.w > 0 && n.h > 0 && ['nw','ne','sw','se'].includes(handle)) {
     const ratio = Math.abs(n.w / n.h);
     if (Math.abs(nw) / Math.abs(nh) > ratio) {
       const tNw = Math.abs(nh) * ratio;
@@ -2066,7 +2314,7 @@ function onPointerMove(e) {
   const it = state.interaction;
   if (!it) return;
 
-  if (!state.dragging && !['pan','marquee','draw'].includes(it.type)) {
+  if (!state.dragging && !['pan','marquee','draw','guide-create'].includes(it.type)) {
     state.dragging = true;
     state.draggingIds = new Set();
     if (it.type === 'move') for (const sn of it.startNodes) state.draggingIds.add(sn.id);
@@ -2077,6 +2325,41 @@ function onPointerMove(e) {
   if (it.type === 'pan') {
     state.viewport.x = it.startVp.x + (e.clientX - it.startScreen.x);
     state.viewport.y = it.startVp.y + (e.clientY - it.startScreen.y);
+    scheduleRender(); return;
+  }
+  if (it.type === 'guide-create') return;
+  if (it.type === 'guide-drag') {
+    const g = (state.doc.guides || []).find(x => x.id === it.guideId);
+    if (!g) return;
+    if (it.axis === 'v') g.pos = it.startPos + (world.x - it.startPointer.x);
+    else g.pos = it.startPos + (world.y - it.startPointer.y);
+    scheduleRender(); return;
+  }
+  if (it.type === 'crop-resize') {
+    const dx = world.x - it.startPointer.x, dy = world.y - it.startPointer.y;
+    const r = { ...it.startRect };
+    if (it.handle.includes('w')) { r.x += dx; r.w -= dx; }
+    if (it.handle.includes('e')) r.w += dx;
+    if (it.handle.includes('n')) { r.y += dy; r.h -= dy; }
+    if (it.handle.includes('s')) r.h += dy;
+    if (r.w < 0) { r.x += r.w; r.w = -r.w; }
+    if (r.h < 0) { r.y += r.h; r.h = -r.h; }
+    const fb = state.cropping.fullBounds;
+    r.x = Math.max(fb.x, Math.min(fb.x + fb.w - 10, r.x));
+    r.y = Math.max(fb.y, Math.min(fb.y + fb.h - 10, r.y));
+    r.w = Math.min(r.w, fb.x + fb.w - r.x);
+    r.h = Math.min(r.h, fb.y + fb.h - r.y);
+    state.cropping.cropRect = r;
+    scheduleRender(); return;
+  }
+  if (it.type === 'crop-move') {
+    const dx = world.x - it.startPointer.x, dy = world.y - it.startPointer.y;
+    const r = { ...it.startRect };
+    r.x += dx; r.y += dy;
+    const fb = state.cropping.fullBounds;
+    r.x = Math.max(fb.x, Math.min(fb.x + fb.w - r.w, r.x));
+    r.y = Math.max(fb.y, Math.min(fb.y + fb.h - r.h, r.y));
+    state.cropping.cropRect = r;
     scheduleRender(); return;
   }
   if (it.type === 'anchor-drag') {
@@ -2225,6 +2508,30 @@ function onPointerUp(e) {
   activePointerId = null;
   if (state.pen.active) { onPenPointerUp(); scheduleRender(); return; }
   const it = state.interaction;
+
+  if (it?.type === 'guide-create') {
+    const sceneRect = getSceneRect();
+    const mx = e.clientX - sceneRect.left;
+    const my = e.clientY - sceneRect.top;
+    if (it.axis === 'h' && my > 25) { const w = screenToWorld(mx, my); addGuide('h', w.y); }
+    else if (it.axis === 'v' && mx > 25) { const w = screenToWorld(mx, my); addGuide('v', w.x); }
+    endInteraction(); state.interaction = null;
+    scheduleRender(); return;
+  }
+  if (it?.type === 'guide-drag') {
+    const g = (state.doc.guides || []).find(x => x.id === it.guideId);
+    if (g) {
+      const sceneRect = getSceneRect();
+      const gs = g.axis === 'v' ? g.pos * state.viewport.zoom + state.viewport.x : g.pos * state.viewport.zoom + state.viewport.y;
+      if (gs < 25) removeGuide(g.id);
+    }
+    endInteraction(); state.interaction = null;
+    scheduleRender(); return;
+  }
+  if (it?.type === 'crop-resize' || it?.type === 'crop-move') {
+    endInteraction(); state.interaction = null;
+    scheduleRender(); return;
+  }
   if (it?.type === 'anchor-drag' || it?.type === 'handle-drag') {
     const node = getNode(it.nodeId);
     if (node) syncPathBounds(node);
@@ -2240,14 +2547,22 @@ function onPointerUp(e) {
         else { state.doc.nodes = state.doc.nodes.filter(x => x.id !== it.id); state.selection.clear(); }
       }
       if (it.tool === 'text' && state.selection.has(it.id)) {
-        const txt = prompt('Enter text:', 'Text');
-        if (txt === null) {
-          const info = findNodeAndParent(it.id);
-          if (info) info.list.splice(info.index, 1);
-          state.selection.delete(it.id);
+        const isArea = n.w > 20 && n.h > 20;
+        if (isArea) {
+          n.textBox = true; n.text = 'Text';
+          n.fontSize = Math.max(14, Math.min(48, Math.round(n.h * 0.25)));
+          updatePropertiesPanel();
         } else {
-          n.text = txt.trim() || 'Text';
-          n.fontSize = Math.max(16, Math.round(n.h * 0.7));
+          const txt = prompt('Enter text:', 'Text');
+          if (txt === null) {
+            const info = findNodeAndParent(it.id);
+            if (info) info.list.splice(info.index, 1);
+            state.selection.delete(it.id);
+          } else {
+            n.text = txt.trim() || 'Text';
+            n.fontSize = 32;
+            n.w = 240; n.h = 60;
+          }
         }
       }
     }
@@ -2283,16 +2598,16 @@ function exitPathEdit() {
 let lastTapInfo = { time: 0, x: 0, y: 0 };
 scene.addEventListener('pointerup', (e) => {
   if (e.pointerType === 'mouse' || pinchState || state.tool === 'pen') return;
+  if (state.cropping) return;
   const now = Date.now();
   if (now - lastTapInfo.time < 350 && Math.hypot(e.clientX - lastTapInfo.x, e.clientY - lastTapInfo.y) < 30) {
     handleDoubleActivation(e.clientX, e.clientY);
     lastTapInfo = { time: 0, x: 0, y: 0 };
-  } else {
-    lastTapInfo = { time: now, x: e.clientX, y: e.clientY };
-  }
+  } else lastTapInfo = { time: now, x: e.clientX, y: e.clientY };
 });
 function onDblClick(e) {
   if (state.tool === 'pen') { if (state.pen.active) finishPenPath(); return; }
+  if (state.cropping) return;
   handleDoubleActivation(e.clientX, e.clientY);
 }
 function handleDoubleActivation(clientX, clientY) {
@@ -2302,21 +2617,31 @@ function handleDoubleActivation(clientX, clientY) {
   if (!hitId) return;
   const node = getNode(hitId);
   if (!node) return;
-  if (node.type === 'text') {
-    setTimeout(() => {
-      const newText = prompt('Edit text:', node.text || '');
-      if (newText !== null) {
-        commitChange(() => { node.text = newText; });
-        scheduleRender(); updateLayersPanel(); updatePropertiesPanel();
-      }
-    }, 50);
-  } else if (node.type === 'path') enterPathEdit(node.id);
+  if (node.type === 'text') openTextEditor(node);
+  else if (node.type === 'path') enterPathEdit(node.id);
   else if (node.type === 'powerclip') enterPowerClipEdit(node.id);
+  else if (node.type === 'image') enterCropMode(node.id);
+}
+function openTextEditor(node) {
+  const modal = document.getElementById('textEditModal');
+  const ta = document.getElementById('textEditArea');
+  ta.value = node.text || '';
+  modal.classList.add('show');
+  ta.focus(); ta.select();
+  const close = (apply) => {
+    modal.classList.remove('show');
+    document.getElementById('btnTextEditOK').onclick = null;
+    document.getElementById('btnTextEditCancel').onclick = null;
+    if (apply) {
+      commitChange(() => { node.text = ta.value; });
+      scheduleRender(); updateLayersPanel(); updatePropertiesPanel();
+    }
+  };
+  document.getElementById('btnTextEditOK').onclick = () => close(true);
+  document.getElementById('btnTextEditCancel').onclick = () => close(false);
 }
 
-/* ============================================================
-   COLOR FIELDS
-   ============================================================ */
+/* ============ COLOR FIELDS ============ */
 function bindColorField(colorId, hexId, onChange) {
   const colorEl = document.getElementById(colorId), hexEl = document.getElementById(hexId);
   if (!colorEl || !hexEl) return;
@@ -2334,7 +2659,6 @@ function bindColorField(colorId, hexId, onChange) {
     if (colorEl.value && /^#[0-9a-fA-F]{6}$/.test(colorEl.value)) hexEl.value = colorEl.value.toLowerCase();
   });
 }
-
 function forEachSelected(fn) {
   const sel = [...state.selection].map(getNode).filter(Boolean);
   if (!sel.length) return false;
@@ -2342,7 +2666,6 @@ function forEachSelected(fn) {
   for (const n of sel) fn(n);
   return true;
 }
-
 bindColorField('fillColor', 'fillHex', (hex) => {
   if (!forEachSelected(n => {
     if (!n.style) n.style = {};
@@ -2369,7 +2692,7 @@ bindColorField('fxShadowColor', 'fxShadowHex', (hex) => {
   const sel = [...state.selection].map(getNode).filter(Boolean);
   if (!sel.length) return;
   const n = sel[0];
-  if (n.type === 'group' || n.type === 'powerclip') return;
+  if (!isSimpleNode(n)) return;
   if (propSnapshot === null) propSnapshot = JSON.stringify(state.doc);
   if (!n.effects) n.effects = {};
   if (!n.effects.shadow) n.effects.shadow = { on: false };
@@ -2377,9 +2700,7 @@ bindColorField('fxShadowColor', 'fxShadowHex', (hex) => {
   scheduleRender(); schedulePropCommit();
 });
 
-/* ============================================================
-   FILL MODE + GRADIENT
-   ============================================================ */
+/* ============ FILL MODE + GRADIENT ============ */
 document.querySelectorAll('[data-fill-mode]').forEach(btn => {
   btn.addEventListener('click', () => setFillMode(btn.dataset.fillMode));
 });
@@ -2398,7 +2719,6 @@ function setFillMode(mode) {
   })) return;
   scheduleRender(); updatePropertiesPanel(); schedulePropCommit();
 }
-
 function renderGradientStops(node) {
   const container = document.getElementById('gradientStops');
   container.innerHTML = '';
@@ -2408,12 +2728,7 @@ function renderGradientStops(node) {
     const div = document.createElement('div');
     div.className = 'gradient-stop';
     const canRemove = fill.stops.length > 2;
-    div.innerHTML = `
-      <input type="color" class="stop-color" value="${stop.color}" data-index="${i}">
-      <input type="text" class="stop-hex" value="${stop.color}" maxlength="7" data-index="${i}">
-      <input type="number" class="stop-offset" value="${Math.round(stop.offset*100)}" min="0" max="100" step="1" data-index="${i}">
-      ${canRemove ? `<button class="stop-remove" data-index="${i}">×</button>` : ''}
-    `;
+    div.innerHTML = `<input type="color" class="stop-color" value="${stop.color}" data-index="${i}"><input type="text" class="stop-hex" value="${stop.color}" maxlength="7" data-index="${i}"><input type="number" class="stop-offset" value="${Math.round(stop.offset*100)}" min="0" max="100" step="1" data-index="${i}">${canRemove ? `<button class="stop-remove" data-index="${i}">×</button>` : ''}`;
     container.appendChild(div);
   });
   container.querySelectorAll('.stop-color').forEach(el => {
@@ -2426,8 +2741,7 @@ function renderGradientStops(node) {
   });
   container.querySelectorAll('.stop-hex').forEach(el => {
     el.addEventListener('input', () => {
-      let v = el.value.trim();
-      if (v.startsWith('#')) v = v.slice(1);
+      let v = el.value.trim(); if (v.startsWith('#')) v = v.slice(1);
       if (/^[0-9a-fA-F]{6}$/.test(v)) {
         const hex = '#' + v.toLowerCase();
         const i = parseInt(el.dataset.index);
@@ -2453,21 +2767,15 @@ function renderGradientStops(node) {
   });
 }
 function updateStopColor(index, color) {
-  if (!forEachSelected(n => {
-    if (isGradientFill(n.style?.fill) && n.style.fill.stops[index]) n.style.fill.stops[index].color = color;
-  })) return;
+  if (!forEachSelected(n => { if (isGradientFill(n.style?.fill) && n.style.fill.stops[index]) n.style.fill.stops[index].color = color; })) return;
   scheduleRender(); schedulePropCommit();
 }
 function updateStopOffset(index, offset) {
-  if (!forEachSelected(n => {
-    if (isGradientFill(n.style?.fill) && n.style.fill.stops[index]) n.style.fill.stops[index].offset = Math.max(0, Math.min(1, offset));
-  })) return;
+  if (!forEachSelected(n => { if (isGradientFill(n.style?.fill) && n.style.fill.stops[index]) n.style.fill.stops[index].offset = Math.max(0, Math.min(1, offset)); })) return;
   scheduleRender(); schedulePropCommit();
 }
 function removeGradientStop(index) {
-  if (!forEachSelected(n => {
-    if (isGradientFill(n.style?.fill) && n.style.fill.stops.length > 2) n.style.fill.stops.splice(index, 1);
-  })) return;
+  if (!forEachSelected(n => { if (isGradientFill(n.style?.fill) && n.style.fill.stops.length > 2) n.style.fill.stops.splice(index, 1); })) return;
   scheduleRender(); updatePropertiesPanel(); schedulePropCommit();
 }
 function addGradientStop() {
@@ -2489,23 +2797,17 @@ function addGradientStop() {
 }
 document.getElementById('btnAddStop').addEventListener('click', addGradientStop);
 document.getElementById('gradientType').addEventListener('change', (e) => {
-  if (!forEachSelected(n => {
-    if (isGradientFill(n.style?.fill)) n.style.fill.type = e.target.value;
-  })) return;
+  if (!forEachSelected(n => { if (isGradientFill(n.style?.fill)) n.style.fill.type = e.target.value; })) return;
   document.getElementById('gradientAngleRow').style.display = e.target.value === 'radial' ? 'none' : '';
   scheduleRender(); schedulePropCommit();
 });
 document.getElementById('gradientAngle').addEventListener('input', (e) => {
   const v = parseFloat(e.target.value) || 0;
-  if (!forEachSelected(n => {
-    if (isGradientFill(n.style?.fill)) n.style.fill.angle = v;
-  })) return;
+  if (!forEachSelected(n => { if (isGradientFill(n.style?.fill)) n.style.fill.angle = v; })) return;
   scheduleRender(); schedulePropCommit();
 });
 
-/* ============================================================
-   PROPERTY PANEL
-   ============================================================ */
+/* ============ PROPERTY PANEL ============ */
 function updatePropertiesPanel() {
   const sel = [...state.selection].map(getNode).filter(Boolean);
   const $ = (id) => document.getElementById(id);
@@ -2526,11 +2828,14 @@ function updatePropertiesPanel() {
 
   const cornersSection = $('cornersSection'), textSection = $('textSection');
   const effectsSection = $('effectsSection'), pathActionsRow = $('pathActionsRow');
+  const imageActionsRow = $('imageActionsRow');
+
   if (!sel.length) {
     ['propX','propY','propW','propH','propRot','propStrokeW','propOpacity'].forEach(id => { const el = $(id); if (el) el.value = ''; });
     $('fillHex').value = ''; $('strokeHex').value = '';
     cornersSection.style.display = 'none'; textSection.style.display = 'none';
     effectsSection.style.display = 'none'; pathActionsRow.style.display = 'none';
+    imageActionsRow.style.display = 'none';
     updateShapeUI(); return;
   }
 
@@ -2573,12 +2878,18 @@ function updatePropertiesPanel() {
 
   cornersSection.style.display = sel.some(x => x.type === 'rect') ? '' : 'none';
   if (sel.some(x => x.type === 'rect')) updateCornerRadiusUI();
-  textSection.style.display = sel.some(x => x.type === 'text') ? 'none' : 'none';
-  if (sel.some(x => x.type === 'text')) {
+
+  const texts = sel.filter(x => x.type === 'text');
+  if (texts.length) {
     textSection.style.display = '';
-    $('propText').value = sel.find(x => x.type === 'text').text || '';
-    $('propFontSize').value = sel.find(x => x.type === 'text').fontSize || 32;
-  }
+    const tn = texts[0];
+    $('propText').value = tn.text || '';
+    $('propFontSize').value = tn.fontSize || 32;
+    $('propTextBox').checked = !!tn.textBox;
+    $('propTextAlign').value = tn.align || 'left';
+  } else textSection.style.display = 'none';
+
+  imageActionsRow.style.display = sel.some(x => x.type === 'image') ? '' : 'none';
 
   const paths = sel.filter(x => x.type === 'path');
   const convertible = sel.filter(x => ['rect','ellipse','line'].includes(x.type));
@@ -2616,6 +2927,10 @@ document.getElementById('btnEditPath').addEventListener('click', () => {
   if (!path) return;
   if (state.pathEditing === path.id) exitPathEdit();
   else enterPathEdit(path.id);
+});
+document.getElementById('btnCropImage').addEventListener('click', () => {
+  const sel = [...state.selection].map(getNode).filter(x => x && x.type === 'image');
+  if (sel[0]) enterCropMode(sel[0].id);
 });
 function updateEffectsFromInputs() {
   const sel = [...state.selection].map(getNode).filter(Boolean);
@@ -2669,6 +2984,20 @@ document.getElementById('propText').addEventListener('input', (e) => {
   for (const n of sel) n.text = e.target.value;
   scheduleRender(); schedulePropCommit();
 });
+document.getElementById('propTextBox').addEventListener('change', (e) => {
+  const sel = [...state.selection].map(getNode).filter(x => x && x.type === 'text');
+  if (!sel.length) return;
+  if (propSnapshot === null) propSnapshot = JSON.stringify(state.doc);
+  for (const n of sel) n.textBox = e.target.checked;
+  scheduleRender(); schedulePropCommit();
+});
+document.getElementById('propTextAlign').addEventListener('change', (e) => {
+  const sel = [...state.selection].map(getNode).filter(x => x && x.type === 'text');
+  if (!sel.length) return;
+  if (propSnapshot === null) propSnapshot = JSON.stringify(state.doc);
+  for (const n of sel) n.align = e.target.value;
+  scheduleRender(); schedulePropCommit();
+});
 document.getElementById('propFontSize').addEventListener('input', (e) => {
   const f = parseFloat(e.target.value);
   if (isNaN(f) || f <= 0) return;
@@ -2679,7 +3008,6 @@ document.getElementById('propFontSize').addEventListener('input', (e) => {
   scheduleRender(); schedulePropCommit();
 });
 
-// Property bindings — map pattern untuk mengurangi duplikasi
 const PROP_BINDINGS = {
   propX: (n, f) => { const dx = f - n.x; n.x = f; eachPoint(n, p => p.x += dx); },
   propY: (n, f) => { const dy = f - n.y; n.y = f; eachPoint(n, p => p.y += dy); },
@@ -2724,9 +3052,7 @@ Object.entries(PROP_BINDINGS).forEach(([id, fn]) => {
   });
 });
 
-/* ============================================================
-   CANVAS SIZE
-   ============================================================ */
+/* ============ CANVAS SIZE ============ */
 function updateCanvasSizeUI() {
   document.getElementById('canvasW').value = state.doc.canvasW;
   document.getElementById('canvasH').value = state.doc.canvasH;
@@ -2741,9 +3067,7 @@ function updateCanvasSizeUI() {
   });
 });
 
-/* ============================================================
-   LAYERS
-   ============================================================ */
+/* ============ LAYERS ============ */
 function updateLayersPanel() {
   const list = document.getElementById('layersList');
   const parts = [];
@@ -2754,17 +3078,11 @@ function updateLayersPanel() {
       const isGroup = n.type === 'group', isPC = n.type === 'powerclip';
       const isEditing = state.editingPowerClip === n.id;
       const cls = `layer-item ${sel} ${isGroup ? 'group' : ''} ${isPC ? 'powerclip' : ''} ${isEditing ? 'editing' : ''}`;
-      parts.push(`<div class="${cls}" data-layer-id="${n.id}" style="padding-left:${10 + depth * 14}px">
-        <span class="layer-name">${escapeHtml(getNodeName(n))}</span>
-        <span class="badge">${isPC ? 'PC' : n.type}</span>
-      </div>`);
+      parts.push(`<div class="${cls}" data-layer-id="${n.id}" style="padding-left:${10 + depth * 14}px"><span class="layer-name">${escapeHtml(getNodeName(n))}</span><span class="badge">${isPC ? 'PC' : n.type}</span></div>`);
       if (isGroup && n.children) walk(n.children, depth + 1);
     }
   }
-  if (state.doc.nodes.length === 0) {
-    list.innerHTML = '<div class="empty-state">No layers yet</div>';
-    updateLayerActionButtons(); return;
-  }
+  if (state.doc.nodes.length === 0) { list.innerHTML = '<div class="empty-state">No layers yet</div>'; updateLayerActionButtons(); return; }
   walk(state.doc.nodes, 0);
   list.innerHTML = parts.join('');
   list.querySelectorAll('.layer-item').forEach(item => {
@@ -2819,9 +3137,7 @@ function mergeSelected() {
   if (topIds.size < 2) return;
   commitChange(() => {
     const toMerge = [];
-    for (let i = state.doc.nodes.length - 1; i >= 0; i--) {
-      if (topIds.has(state.doc.nodes[i].id)) toMerge.unshift(state.doc.nodes.splice(i, 1)[0]);
-    }
+    for (let i = state.doc.nodes.length - 1; i >= 0; i--) if (topIds.has(state.doc.nodes[i].id)) toMerge.unshift(state.doc.nodes.splice(i, 1)[0]);
     const group = { id: genId(), type: 'group', name: 'Group', children: toMerge };
     state.doc.nodes.push(group);
     state.selection = new Set([group.id]);
@@ -2848,6 +3164,7 @@ function ungroupSelected() {
 function deleteSelected() {
   if (!state.selection.size) return;
   if (state.editingPowerClip) exitPowerClipEdit();
+  if (state.cropping) state.cropping = null;
   commitChange(() => {
     for (const id of state.selection) {
       const info = findNodeAndParent(id);
@@ -2913,9 +3230,7 @@ function showMoveIntoMenu(anchor) {
   if (groups.length) {
     items.push({ label: '___SEP___', action: null });
     items.push({ label: 'Existing:', action: null, isLabel: true });
-    for (const { node, depth } of groups) {
-      items.push({ label: '📂 ' + getNodeName(node), action: () => moveSelectionInto(node.id), indent: depth });
-    }
+    for (const { node, depth } of groups) items.push({ label: '📂 ' + getNodeName(node), action: () => moveSelectionInto(node.id), indent: depth });
   }
   menu.innerHTML = items.map((item, i) => {
     if (item.label === '___SEP___') return '<div class="menu-sep"></div>';
@@ -2944,13 +3259,12 @@ document.getElementById('btnLayerUp').addEventListener('click', () => moveLayer(
 document.getElementById('btnLayerDown').addEventListener('click', () => moveLayer(-1));
 document.getElementById('btnLayerDelete').addEventListener('click', deleteSelected);
 
-/* ============================================================
-   TOOLS
-   ============================================================ */
+/* ============ TOOLS ============ */
 function setTool(tool) {
   if (state.pen.active && tool !== 'pen') finishPenPath();
   if (state.pathEditing && tool !== 'select') exitPathEdit();
   if (state.editingPowerClip && tool !== 'select') exitPowerClipEdit();
+  if (state.cropping && tool !== 'select') cancelCrop();
   state.tool = tool;
   document.querySelectorAll('.tools button').forEach(b => b.classList.toggle('active', b.dataset.tool === tool));
   canvasArea.style.cursor = tool === 'hand' ? 'grab' : tool === 'select' ? 'default' : 'crosshair';
@@ -2978,12 +3292,10 @@ rectToolBtn.addEventListener('click', (e) => {
 }, true);
 function createFullCanvasRect() {
   commitChange(() => {
-    const node = {
-      id: genId(), type: 'rect', name: 'Canvas Cover',
+    const node = { id: genId(), type: 'rect', name: 'Canvas Cover',
       x: 0, y: 0, w: state.doc.canvasW, h: state.doc.canvasH, rotation: 0,
       corners: { tl: 0, tr: 0, br: 0, bl: 0 },
-      style: { fill: '#c8e6ff', stroke: '#0af', strokeWidth: 2, opacity: 1 },
-    };
+      style: { fill: '#c8e6ff', stroke: '#0af', strokeWidth: 2, opacity: 1 } };
     state.doc.nodes.push(node);
     state.selection = new Set([node.id]);
   });
@@ -2998,9 +3310,7 @@ btnMagnet.addEventListener('click', () => {
   showToast(state.magnetEnabled ? '🧲 ON' : 'OFF');
 });
 
-/* ============================================================
-   ZOOM
-   ============================================================ */
+/* ============ ZOOM ============ */
 function onWheel(e) {
   e.preventDefault();
   const rect = getSceneRect();
@@ -3018,16 +3328,14 @@ function updateZoomLabel() {
 function fitToView() {
   const rect = canvasArea.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
-  const zoom = Math.min(rect.width / state.doc.canvasW, rect.height / state.doc.canvasH) * 0.9;
+  const zoom = Math.min((rect.width - 30) / state.doc.canvasW, (rect.height - 30) / state.doc.canvasH) * 0.9;
   state.viewport.zoom = zoom;
-  state.viewport.x = (rect.width - state.doc.canvasW * zoom) / 2;
-  state.viewport.y = (rect.height - state.doc.canvasH * zoom) / 2;
+  state.viewport.x = (rect.width - 22 - state.doc.canvasW * zoom) / 2;
+  state.viewport.y = (rect.height - 22 - state.doc.canvasH * zoom) / 2;
   render(); renderOverlay(); updateZoomLabel();
 }
 
-/* ============================================================
-   FILE I/O
-   ============================================================ */
+/* ============ FILE I/O ============ */
 async function saveWithPicker(data, filename, mimeType, ext) {
   const blob = data instanceof Blob ? data : new Blob([data], { type: mimeType });
   if (window.showSaveFilePicker) {
@@ -3079,6 +3387,7 @@ async function loadJSON() {
   input.click();
 }
 function migrateDoc(doc) {
+  if (!doc.guides) doc.guides = [];
   function migrate(nodes) {
     for (const n of nodes) {
       if (n.type === 'path') ensureSubpaths(n);
@@ -3086,6 +3395,12 @@ function migrateDoc(doc) {
       if (n.type === 'powerclip') {
         if (n.container) migrate([n.container]);
         if (n.contents) migrate(n.contents);
+      }
+      if (n.attachedPath && n.attachedPath.subpaths) {
+        for (const sp of n.attachedPath.subpaths) for (const a of sp.anchors) {
+          if (!a.cIn) a.cIn = { x: 0, y: 0 };
+          if (!a.cOut) a.cOut = { x: 0, y: 0 };
+        }
       }
     }
   }
@@ -3137,12 +3452,10 @@ function importImage() {
         const maxW = state.doc.canvasW * 0.6, maxH = state.doc.canvasH * 0.6;
         const scale = Math.min(maxW / w, maxH / h, 1);
         const nw = w * scale, nh = h * scale;
-        const node = {
-          id: genId(), type: 'image',
+        const node = { id: genId(), type: 'image',
           x: (state.doc.canvasW - nw) / 2, y: (state.doc.canvasH - nh) / 2,
           w: nw, h: nh, rotation: 0, src, style: { opacity: 1 },
-          name: file.name.replace(/\.[^.]+$/, ''),
-        };
+          name: file.name.replace(/\.[^.]+$/, '') };
         commitChange(() => { state.doc.nodes.push(node); state.selection = new Set([node.id]); });
         scheduleRender(); updateLayersPanel(); updatePropertiesPanel();
         showToast('✅ Imported');
@@ -3175,22 +3488,13 @@ function nodeToSVG(n) {
         clipContent = (corners.tl || corners.tr || corners.br || corners.bl)
           ? `<path d="${roundedRectPath(c.x, c.y, c.w, c.h, corners)}"/>`
           : `<rect x="${c.x}" y="${c.y}" width="${c.w}" height="${c.h}"/>`;
-      } else if (c.type === 'ellipse') {
-        clipContent = `<ellipse cx="${c.x+c.w/2}" cy="${c.y+c.h/2}" rx="${c.w/2}" ry="${c.h/2}"/>`;
-      } else if (c.type === 'path') {
-        clipContent = `<path d="${getPathD(c)}"/>`;
-      } else {
-        const b = getNodeBounds(c);
-        clipContent = `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}"/>`;
-      }
+      } else if (c.type === 'ellipse') clipContent = `<ellipse cx="${c.x+c.w/2}" cy="${c.y+c.h/2}" rx="${c.w/2}" ry="${c.h/2}"/>`;
+      else if (c.type === 'path') clipContent = `<path d="${getPathD(c)}"/>`;
+      else { const b = getNodeBounds(c); clipContent = `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}"/>`; }
     }
     const contentsSvg = (n.contents || []).map(nodeToSVG).join('');
     const containerSvg = c ? nodeToSVG(c) : '';
-    return `<g data-id="${n.id}">
-      <defs><clipPath id="${cid}" clipPathUnits="userSpaceOnUse">${clipContent}</clipPath></defs>
-      <g clip-path="url(#${cid})">${contentsSvg}</g>
-      ${containerSvg}
-    </g>`;
+    return `<g data-id="${n.id}"><defs><clipPath id="${cid}" clipPathUnits="userSpaceOnUse">${clipContent}</clipPath></defs><g clip-path="url(#${cid})">${contentsSvg}</g>${containerSvg}</g>`;
   }
   let inner = '';
   if (type === 'rect') {
@@ -3204,9 +3508,26 @@ function nodeToSVG(n) {
     inner = `<line x1="${x}" y1="${y}" x2="${x+w}" y2="${y+h}" stroke="${style?.stroke || '#2a2a2a'}" stroke-width="${sw || 2}" opacity="${op}" stroke-linecap="round"/>`;
   } else if (type === 'text') {
     const fs = n.fontSize || 32;
-    inner = `<text x="${x}" y="${y + fs}" font-size="${fs}" fill="${fillCss}" stroke="${sw > 0 ? stroke : 'none'}" stroke-width="${sw}" opacity="${op}" font-family="system-ui, sans-serif">${escapeHtml(n.text || '')}</text>`;
+    if (n.attachedPath) {
+      inner = `<text x="${x}" y="${y + fs}" font-size="${fs}" fill="${fillCss}" font-family="system-ui">${escapeHtml(n.text || '')}</text>`;
+    } else {
+      const lh = (n.lineHeight || 1.2) * fs;
+      const lines = (n.text || '').split('\n');
+      const tspans = lines.map((line, i) => `<tspan x="${x}" dy="${i === 0 ? fs : lh}">${escapeHtml(line)}</tspan>`).join('');
+      inner = `<text x="${x}" y="${y}" font-size="${fs}" fill="${fillCss}" stroke="${sw > 0 ? stroke : 'none'}" stroke-width="${sw}" opacity="${op}" font-family="system-ui" xml:space="preserve">${tspans}</text>`;
+    }
   } else if (type === 'image') {
-    inner = `<image href="${n.src}" x="${x}" y="${y}" width="${Math.abs(w)}" height="${Math.abs(h)}" preserveAspectRatio="none" opacity="${op}"/>`;
+    const crop = n.crop;
+    if (crop) {
+      const fullW = Math.abs(w) / crop.w;
+      const fullH = Math.abs(h) / crop.h;
+      const fullX = x - crop.x * fullW;
+      const fullY = y - crop.y * fullH;
+      const cid = `crop-${n.id}`;
+      inner = `<defs><clipPath id="${cid}"><rect x="${x}" y="${y}" width="${Math.abs(w)}" height="${Math.abs(h)}"/></clipPath></defs><image href="${n.src}" x="${fullX}" y="${fullY}" width="${fullW}" height="${fullH}" preserveAspectRatio="none" opacity="${op}" clip-path="url(#${cid})"/>`;
+    } else {
+      inner = `<image href="${n.src}" x="${x}" y="${y}" width="${Math.abs(w)}" height="${Math.abs(h)}" preserveAspectRatio="none" opacity="${op}"/>`;
+    }
   } else if (type === 'path') {
     const d = getPathD(n);
     const pathFill = getSubpaths(n).some(sp => sp.closed) ? fillCss : 'none';
@@ -3220,16 +3541,10 @@ function docToSVGString() {
   const filters = state.doc.nodes.map(buildFilterDef).filter(Boolean).join('');
   const gradients = state.doc.nodes.map(buildGradientDef).filter(Boolean).join('');
   const nodes = state.doc.nodes.map(nodeToSVG).join('');
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${state.doc.canvasW}" height="${state.doc.canvasH}" viewBox="0 0 ${state.doc.canvasW} ${state.doc.canvasH}">
-    <defs>${filters}${gradients}</defs>
-    <rect width="${state.doc.canvasW}" height="${state.doc.canvasH}" fill="white"/>
-    ${nodes}
-  </svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${state.doc.canvasW}" height="${state.doc.canvasH}" viewBox="0 0 ${state.doc.canvasW} ${state.doc.canvasH}"><defs>${filters}${gradients}</defs><rect width="${state.doc.canvasW}" height="${state.doc.canvasH}" fill="white"/>${nodes}</svg>`;
 }
 
-/* ============================================================
-   FILE MENU
-   ============================================================ */
+/* ============ FILE MENU ============ */
 function closeAllMenus() {
   if (fileMenuEl) { fileMenuEl.remove(); fileMenuEl = null; }
   if (contextMenuEl) { contextMenuEl.remove(); contextMenuEl = null; }
@@ -3241,16 +3556,7 @@ document.getElementById('btnFileMenu').addEventListener('click', (e) => {
   closeAllMenus();
   const menu = document.createElement('div');
   menu.className = 'export-menu';
-  menu.innerHTML = `
-    <button data-action="save">💾 Save</button>
-    <button data-action="open">📂 Open</button>
-    <button data-action="import">🖼 Import Image</button>
-    <div class="menu-sep"></div>
-    <button data-action="export-svg">⤓ Export SVG</button>
-    <button data-action="export-png">⤓ Export PNG</button>
-    <div class="menu-sep"></div>
-    <button data-action="clear-autosave">🗑 Clear autosave</button>
-  `;
+  menu.innerHTML = `<button data-action="save">💾 Save</button><button data-action="open">📂 Open</button><button data-action="import">🖼 Import Image</button><button data-action="import-svg">🎨 Import SVG</button><div class="menu-sep"></div><button data-action="export-svg">⤓ Export SVG</button><button data-action="export-png">⤓ Export PNG</button><div class="menu-sep"></div><button data-action="clear-autosave">🗑 Clear autosave</button>`;
   document.body.appendChild(menu);
   fileMenuEl = menu;
   const r = e.currentTarget.getBoundingClientRect();
@@ -3265,6 +3571,7 @@ document.getElementById('btnFileMenu').addEventListener('click', (e) => {
       if (action === 'save') saveJSON();
       else if (action === 'open') loadJSON();
       else if (action === 'import') importImage();
+      else if (action === 'import-svg') importSVG();
       else if (action === 'export-svg') exportSVG();
       else if (action === 'export-png') exportPNG();
       else if (action === 'clear-autosave') {
@@ -3279,9 +3586,7 @@ document.addEventListener('click', (e) => {
   document.querySelectorAll('.export-menu').forEach(m => { if (!m.contains(e.target)) m.remove(); });
 });
 
-/* ============================================================
-   TOOLTIPS / TOAST
-   ============================================================ */
+/* ============ TOOLTIPS / TOAST ============ */
 const tooltipEl = document.getElementById('tooltip');
 let tooltipTimer = null;
 function showTooltipAt(el, text) {
@@ -3315,9 +3620,7 @@ function showToast(msg) {
   setTimeout(() => t.remove(), 2000);
 }
 
-/* ============================================================
-   SIDEBAR
-   ============================================================ */
+/* ============ SIDEBAR ============ */
 function isMobileLayout() { return window.matchMedia('(max-width: 720px)').matches; }
 document.getElementById('btnToggleSidebar').addEventListener('click', () => document.body.classList.toggle('sidebar-collapsed'));
 document.getElementById('btnCloseSidebar').addEventListener('click', () => document.body.classList.add('sidebar-collapsed'));
@@ -3326,15 +3629,14 @@ document.getElementById('panelAlpha').addEventListener('input', (e) => {
   document.documentElement.style.setProperty('--panel-alpha', e.target.value);
 });
 
-/* ============================================================
-   KEYBOARD
-   ============================================================ */
+/* ============ KEYBOARD ============ */
 function onKeyDown(e) {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if (state.pen.active) {
     if (e.key === 'Enter') { e.preventDefault(); finishPenPath(); return; }
     if (e.key === 'Escape') { e.preventDefault(); cancelPenPath(); return; }
   }
+  if (state.cropping && e.key === 'Escape') { e.preventDefault(); cancelCrop(); return; }
   if (state.pathEditing) {
     if (e.key === 'Escape') { e.preventDefault(); exitPathEdit(); return; }
     if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedAnchor !== -1) {
@@ -3373,12 +3675,11 @@ scene.addEventListener('pointermove', (e) => {
   scheduleRender();
 });
 
-/* ============================================================
-   INITIAL DOC + BOOT
-   ============================================================ */
+/* ============ INITIAL DOC + BOOT ============ */
 function makeInitialDoc() {
   return {
     canvasW: 1200, canvasH: 800,
+    guides: [],
     nodes: [
       { id: 'n1', type: 'rect', name: 'Gradient Box', x: 100, y: 100, w: 220, h: 160, rotation: 0,
         corners: { tl: 20, tr: 20, br: 20, bl: 20 },
@@ -3404,6 +3705,7 @@ function init() {
   if (isMobileLayout()) document.body.classList.add('sidebar-collapsed');
 
   render(); fitToView(); renderOverlay();
+  drawRulers();
   updateLayersPanel(); updatePropertiesPanel(); updateCanvasSizeUI();
   updateHistoryButtons(); setTool('select');
 
@@ -3419,8 +3721,9 @@ function init() {
   document.getElementById('btnUndo').addEventListener('click', undo);
   document.getElementById('btnRedo').addEventListener('click', redo);
   document.getElementById('btnFit').addEventListener('click', fitToView);
-  new ResizeObserver(() => scheduleRender()).observe(canvasArea);
-  window.addEventListener('resize', () => scheduleRender());
+  bindRulers();
+  new ResizeObserver(() => { scheduleRender(); drawRulers(); }).observe(canvasArea);
+  window.addEventListener('resize', () => { scheduleRender(); drawRulers(); });
   window.matchMedia('(max-width: 720px)').addEventListener('change', (e) => {
     if (e.matches) document.body.classList.add('sidebar-collapsed');
     scheduleRender();
@@ -3464,3 +3767,540 @@ function init() {
 }
 
 init();
+/* ============================================================
+   SVG IMPORT
+   ============================================================ */
+function importSVG() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.svg,image/svg+xml';
+  input.onchange = () => {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const result = parseSVGText(reader.result);
+        if (!result.nodes.length) { showToast('No drawable elements found'); return; }
+        commitChange(() => {
+          for (const n of result.nodes) state.doc.nodes.push(n);
+          state.selection = new Set(result.nodes.map(n => n.id));
+        });
+        scheduleRender(); updateLayersPanel(); updatePropertiesPanel();
+        showToast(`✅ Imported ${result.nodes.length} element${result.nodes.length > 1 ? 's' : ''}`);
+      } catch (err) {
+        console.error('SVG import error:', err);
+        alert('Failed to import SVG: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+function parseSVGText(text) {
+  const parser = new DOMParser();
+  const xmlDoc = parser.parseFromString(text, 'image/svg+xml');
+  if (xmlDoc.querySelector('parsererror')) throw new Error('Invalid SVG file');
+  const svg = xmlDoc.querySelector('svg');
+  if (!svg) throw new Error('No <svg> element found');
+
+  const viewBox = svg.getAttribute('viewBox');
+  let vbX = 0, vbY = 0, vbW = 0, vbH = 0;
+  if (viewBox) {
+    const parts = viewBox.split(/[\s,]+/).map(parseFloat);
+    [vbX, vbY, vbW, vbH] = parts;
+  }
+  const svgW = parseFloat(svg.getAttribute('width')) || vbW || 800;
+  const svgH = parseFloat(svg.getAttribute('height')) || vbH || 600;
+  const srcW = vbW || svgW;
+  const srcH = vbH || svgH;
+
+  // Fit SVG ke ~80% canvas, ter-center
+  const cW = state.doc.canvasW, cH = state.doc.canvasH;
+  const fitScale = Math.min(cW / srcW, cH / srcH) * 0.8;
+  const offsetX = (cW - srcW * fitScale) / 2 - vbX * fitScale;
+  const offsetY = (cH - srcH * fitScale) / 2 - vbY * fitScale;
+  const rootMatrix = [fitScale, 0, 0, fitScale, offsetX, offsetY];
+
+  const nodes = [];
+  for (const child of svg.children) {
+    const result = parseSVGElement(child, rootMatrix);
+    if (result) {
+      if (Array.isArray(result)) nodes.push(...result);
+      else nodes.push(result);
+    }
+  }
+  return { nodes, width: srcW, height: srcH };
+}
+
+function parseSVGElement(el, parentMatrix) {
+  const tag = el.tagName.toLowerCase();
+  const skipTags = ['defs','title','desc','metadata','style','script','clippath','mask','filter','lineargradient','radialgradient','pattern','symbol','marker','use','foreignobject'];
+  if (skipTags.includes(tag)) return null;
+
+  const localMatrix = parseSVGTransform(el.getAttribute('transform'));
+  const matrix = multiplyMatrix(parentMatrix, localMatrix);
+  const style = extractSVGStyle(el);
+
+  if (tag === 'g') {
+    const children = [];
+    for (const child of el.children) {
+      const result = parseSVGElement(child, matrix);
+      if (result) {
+        if (Array.isArray(result)) children.push(...result);
+        else children.push(result);
+      }
+    }
+    if (children.length === 0) return null;
+    if (children.length === 1) return children[0];
+    return { id: genId(), type: 'group', name: el.getAttribute('id') || 'Group', children };
+  }
+
+  let node = null;
+
+  if (tag === 'rect') {
+    const x = parseFloat(el.getAttribute('x')) || 0;
+    const y = parseFloat(el.getAttribute('y')) || 0;
+    const w = parseFloat(el.getAttribute('width')) || 0;
+    const h = parseFloat(el.getAttribute('height')) || 0;
+    if (w <= 0 || h <= 0) return null;
+    const rx = parseFloat(el.getAttribute('rx')) || 0;
+    const ry = parseFloat(el.getAttribute('ry')) || rx;
+    const r = Math.min(Math.max(rx, ry), w/2, h/2);
+    let anchors;
+    if (r > 0) {
+      const k = 0.5522847498 * r;
+      anchors = [
+        makeAnchor(x + r, y, { cInX: -k, cInY: 0, cOutX: 0, cOutY: 0 }),
+        makeAnchor(x + w - r, y, { cInX: 0, cInY: 0, cOutX: k, cOutY: 0 }),
+        makeAnchor(x + w, y + r, { cInX: 0, cInY: -k, cOutX: 0, cOutY: 0 }),
+        makeAnchor(x + w, y + h - r, { cInX: 0, cInY: 0, cOutX: 0, cOutY: k }),
+        makeAnchor(x + w - r, y + h, { cInX: k, cInY: 0, cOutX: 0, cOutY: 0 }),
+        makeAnchor(x + r, y + h, { cInX: 0, cInY: 0, cOutX: -k, cOutY: 0 }),
+        makeAnchor(x, y + h - r, { cInX: 0, cInY: k, cOutX: 0, cOutY: 0 }),
+        makeAnchor(x, y + r, { cInX: 0, cInY: 0, cOutX: 0, cOutY: -k }),
+      ];
+    } else {
+      anchors = [makeAnchor(x,y), makeAnchor(x+w,y), makeAnchor(x+w,y+h), makeAnchor(x,y+h)];
+    }
+    const subpaths = [{ anchors, closed: true }];
+    transformSubpaths(subpaths, matrix);
+    node = { id: genId(), type: 'path', name: el.getAttribute('id') || 'Rect', subpaths, rotation: 0, style: svgStyleToNodeStyle(style) };
+    computePathBoundsInto(node);
+  } else if (tag === 'circle') {
+    const cx = parseFloat(el.getAttribute('cx')) || 0;
+    const cy = parseFloat(el.getAttribute('cy')) || 0;
+    const r = parseFloat(el.getAttribute('r')) || 0;
+    if (r <= 0) return null;
+    const k = 0.5522847498 * r;
+    const anchors = [
+      makeAnchor(cx, cy-r, { cInX: -k, cInY: 0, cOutX: k, cOutY: 0 }),
+      makeAnchor(cx+r, cy, { cInX: 0, cInY: -k, cOutX: 0, cOutY: k }),
+      makeAnchor(cx, cy+r, { cInX: k, cInY: 0, cOutX: -k, cOutY: 0 }),
+      makeAnchor(cx-r, cy, { cInX: 0, cInY: k, cOutX: 0, cOutY: -k }),
+    ];
+    const subpaths = [{ anchors, closed: true }];
+    transformSubpaths(subpaths, matrix);
+    node = { id: genId(), type: 'path', name: el.getAttribute('id') || 'Circle', subpaths, rotation: 0, style: svgStyleToNodeStyle(style) };
+    computePathBoundsInto(node);
+  } else if (tag === 'ellipse') {
+    const cx = parseFloat(el.getAttribute('cx')) || 0;
+    const cy = parseFloat(el.getAttribute('cy')) || 0;
+    const rx = parseFloat(el.getAttribute('rx')) || 0;
+    const ry = parseFloat(el.getAttribute('ry')) || 0;
+    if (rx <= 0 || ry <= 0) return null;
+    const kx = 0.5522847498 * rx, ky = 0.5522847498 * ry;
+    const anchors = [
+      makeAnchor(cx, cy-ry, { cInX: -kx, cInY: 0, cOutX: kx, cOutY: 0 }),
+      makeAnchor(cx+rx, cy, { cInX: 0, cInY: -ky, cOutX: 0, cOutY: ky }),
+      makeAnchor(cx, cy+ry, { cInX: kx, cInY: 0, cOutX: -kx, cOutY: 0 }),
+      makeAnchor(cx-rx, cy, { cInX: 0, cInY: ky, cOutX: 0, cOutY: -ky }),
+    ];
+    const subpaths = [{ anchors, closed: true }];
+    transformSubpaths(subpaths, matrix);
+    node = { id: genId(), type: 'path', name: el.getAttribute('id') || 'Ellipse', subpaths, rotation: 0, style: svgStyleToNodeStyle(style) };
+    computePathBoundsInto(node);
+  } else if (tag === 'line') {
+    const x1 = parseFloat(el.getAttribute('x1')) || 0;
+    const y1 = parseFloat(el.getAttribute('y1')) || 0;
+    const x2 = parseFloat(el.getAttribute('x2')) || 0;
+    const y2 = parseFloat(el.getAttribute('y2')) || 0;
+    const anchors = [makeAnchor(x1,y1), makeAnchor(x2,y2)];
+    const subpaths = [{ anchors, closed: false }];
+    transformSubpaths(subpaths, matrix);
+    node = { id: genId(), type: 'path', name: el.getAttribute('id') || 'Line', subpaths, rotation: 0, style: svgStyleToNodeStyle(style, true) };
+    computePathBoundsInto(node);
+  } else if (tag === 'polyline' || tag === 'polygon') {
+    const pts = (el.getAttribute('points') || '').match(/[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?/g)?.map(parseFloat) || [];
+    if (pts.length < 4) return null;
+    const anchors = [];
+    for (let i = 0; i < pts.length; i += 2) anchors.push(makeAnchor(pts[i], pts[i+1]));
+    const subpaths = [{ anchors, closed: tag === 'polygon' }];
+    transformSubpaths(subpaths, matrix);
+    node = { id: genId(), type: 'path', name: el.getAttribute('id') || tag, subpaths, rotation: 0, style: svgStyleToNodeStyle(style, tag === 'polyline') };
+    computePathBoundsInto(node);
+  } else if (tag === 'path') {
+    const d = el.getAttribute('d') || '';
+    if (!d.trim()) return null;
+    const subpaths = parseSVGPathData(d);
+    if (!subpaths.length) return null;
+    transformSubpaths(subpaths, matrix);
+    const hasClosed = subpaths.some(sp => sp.closed);
+    node = { id: genId(), type: 'path', name: el.getAttribute('id') || 'Path', subpaths, rotation: 0, style: svgStyleToNodeStyle(style, !hasClosed) };
+    const fillRule = el.getAttribute('fill-rule') || style['fill-rule'];
+    if (fillRule) node.fillRule = fillRule;
+    computePathBoundsInto(node);
+  } else if (tag === 'text') {
+    const x = parseFloat(el.getAttribute('x')) || 0;
+    const y = parseFloat(el.getAttribute('y')) || 0;
+    const content = el.textContent || '';
+    if (!content.trim()) return null;
+    const fontSize = parseFloat(el.getAttribute('font-size')) || parseFloat((style['font-size'] || '').replace('px','')) || 32;
+    const pos = applyMatrixToPoint(matrix, x, y);
+    const textW = Math.max(50, content.length * fontSize * 0.55);
+    const textH = fontSize * 1.2;
+    node = {
+      id: genId(), type: 'text', name: el.getAttribute('id') || 'Text',
+      x: pos.x, y: pos.y - fontSize, w: textW, h: textH, rotation: 0,
+      text: content, fontSize, style: svgStyleToNodeStyle(style),
+    };
+  } else if (tag === 'image') {
+    const href = el.getAttribute('href') || el.getAttributeNS('http://www.w3.org/1999/xlink', 'href') || el.getAttribute('xlink:href');
+    if (!href || !href.startsWith('data:')) return null;
+    const x = parseFloat(el.getAttribute('x')) || 0;
+    const y = parseFloat(el.getAttribute('y')) || 0;
+    const w = parseFloat(el.getAttribute('width')) || 0;
+    const h = parseFloat(el.getAttribute('height')) || 0;
+    if (w <= 0 || h <= 0) return null;
+    const p1 = applyMatrixToPoint(matrix, x, y);
+    const p2 = applyMatrixToPoint(matrix, x + w, y + h);
+    node = {
+      id: genId(), type: 'image', name: el.getAttribute('id') || 'Image',
+      x: p1.x, y: p1.y, w: p2.x - p1.x, h: p2.y - p1.y,
+      rotation: 0, src: href, style: svgStyleToNodeStyle(style),
+    };
+  }
+  return node;
+}
+
+function extractSVGStyle(el) {
+  const style = {};
+  for (const attr of ['fill','stroke','stroke-width','opacity','fill-opacity','stroke-opacity','fill-rule','font-size']) {
+    const val = el.getAttribute(attr);
+    if (val !== null) style[attr] = val;
+  }
+  const inline = el.getAttribute('style');
+  if (inline) {
+    for (const part of inline.split(';')) {
+      const idx = part.indexOf(':');
+      if (idx < 0) continue;
+      const k = part.slice(0, idx).trim();
+      const v = part.slice(idx + 1).trim();
+      if (k && v) style[k] = v;
+    }
+  }
+  return style;
+}
+
+function svgStyleToNodeStyle(style, noFill) {
+  let fill = style.fill !== undefined ? style.fill : '#000000';
+  let stroke = style.stroke !== undefined ? style.stroke : 'none';
+  const strokeWidth = parseFloat(style['stroke-width']) || 1;
+  let opacity = parseFloat(style.opacity);
+  if (isNaN(opacity)) opacity = 1;
+  if (fill && fill.startsWith('url(')) fill = '#888888';
+  if (stroke && stroke.startsWith('url(')) stroke = '#333333';
+  if (noFill && fill !== 'none') fill = 'none';
+  return {
+    fill: fill === 'none' ? 'none' : svgColorToHex(fill),
+    stroke: stroke === 'none' ? 'none' : svgColorToHex(stroke),
+    strokeWidth,
+    opacity: Math.max(0, Math.min(1, opacity)),
+  };
+}
+
+function svgColorToHex(c) {
+  if (!c) return '#000000';
+  c = String(c).trim().toLowerCase();
+  if (c === 'none' || c === 'transparent') return 'none';
+  if (c.startsWith('#')) return c;
+  if (c.startsWith('rgb')) {
+    const nums = c.match(/\d+(?:\.\d+)?/g)?.map(Number) || [0,0,0];
+    const toHex = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
+    return '#' + toHex(nums[0]||0) + toHex(nums[1]||0) + toHex(nums[2]||0);
+  }
+  const named = { black:'#000000', white:'#ffffff', red:'#ff0000', green:'#008000', blue:'#0000ff',
+    yellow:'#ffff00', cyan:'#00ffff', magenta:'#ff00ff', gray:'#808080', grey:'#808080',
+    orange:'#ffa500', purple:'#800080', pink:'#ffc0cb', brown:'#a52a2a', navy:'#000080',
+    teal:'#008080', olive:'#808000', lime:'#00ff00', maroon:'#800000', silver:'#c0c0c0',
+    aqua:'#00ffff', fuchsia:'#ff00ff' };
+  return named[c] || '#000000';
+}
+
+function computePathBoundsInto(node) {
+  const b = computePathBounds(node);
+  node.x = b.x; node.y = b.y; node.w = b.w; node.h = b.h;
+}
+
+function transformSubpaths(subpaths, matrix) {
+  const [a, b, c, d, e, f] = matrix;
+  for (const sp of subpaths) {
+    for (const anchor of sp.anchors) {
+      const nx = a * anchor.x + c * anchor.y + e;
+      const ny = b * anchor.x + d * anchor.y + f;
+      anchor.x = nx; anchor.y = ny;
+      const nix = a * anchor.cIn.x + c * anchor.cIn.y;
+      const niy = b * anchor.cIn.x + d * anchor.cIn.y;
+      anchor.cIn.x = nix; anchor.cIn.y = niy;
+      const nox = a * anchor.cOut.x + c * anchor.cOut.y;
+      const noy = b * anchor.cOut.x + d * anchor.cOut.y;
+      anchor.cOut.x = nox; anchor.cOut.y = noy;
+    }
+  }
+}
+
+function parseSVGPathData(d) {
+  const tokens = d.match(/[a-zA-Z]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?/g) || [];
+  let i = 0;
+  let cx = 0, cy = 0, startX = 0, startY = 0;
+  let lastCx = null, lastCy = null, lastCmd = '';
+  const subpaths = [];
+  let current = null;
+
+  function ensureSubpath() {
+    if (!current) { current = { anchors: [], closed: false }; subpaths.push(current); }
+  }
+  function addAnchor(x, y, cIn, cOut) {
+    ensureSubpath();
+    current.anchors.push({ x, y, cIn: cIn || {x:0,y:0}, cOut: cOut || {x:0,y:0} });
+  }
+  function num() { return parseFloat(tokens[i++]); }
+
+  while (i < tokens.length) {
+    let cmd = tokens[i];
+    let isRel = false;
+    if (/^[a-zA-Z]$/.test(cmd)) {
+      isRel = cmd === cmd.toLowerCase();
+      i++;
+    } else if (lastCmd) {
+      cmd = lastCmd;
+      isRel = cmd === cmd.toLowerCase();
+    } else { i++; continue; }
+
+    const C = cmd.toUpperCase();
+    if (C === 'M') {
+      const x = num(), y = num();
+      cx = isRel ? cx + x : x;
+      cy = isRel ? cy + y : y;
+      startX = cx; startY = cy;
+      current = { anchors: [], closed: false };
+      subpaths.push(current);
+      addAnchor(cx, cy);
+      lastCx = null; lastCy = null;
+    } else if (C === 'L') {
+      const x = num(), y = num();
+      cx = isRel ? cx + x : x;
+      cy = isRel ? cy + y : y;
+      addAnchor(cx, cy);
+      lastCx = null; lastCy = null;
+    } else if (C === 'H') {
+      const x = num();
+      cx = isRel ? cx + x : x;
+      addAnchor(cx, cy);
+      lastCx = null; lastCy = null;
+    } else if (C === 'V') {
+      const y = num();
+      cy = isRel ? cy + y : y;
+      addAnchor(cx, cy);
+      lastCx = null; lastCy = null;
+    } else if (C === 'C') {
+      const x1 = num(), y1 = num(), x2 = num(), y2 = num(), x = num(), y = num();
+      const c1x = isRel ? cx + x1 : x1, c1y = isRel ? cy + y1 : y1;
+      const c2x = isRel ? cx + x2 : x2, c2y = isRel ? cy + y2 : y2;
+      const nx = isRel ? cx + x : x, ny = isRel ? cy + y : y;
+      const last = current.anchors[current.anchors.length - 1];
+      if (last) last.cOut = { x: c1x - last.x, y: c1y - last.y };
+      addAnchor(nx, ny, { x: c2x - nx, y: c2y - ny });
+      lastCx = c2x; lastCy = c2y; cx = nx; cy = ny;
+    } else if (C === 'S') {
+      const x2 = num(), y2 = num(), x = num(), y = num();
+      const c1x = lastCx !== null ? 2*cx - lastCx : cx;
+      const c1y = lastCy !== null ? 2*cy - lastCy : cy;
+      const c2x = isRel ? cx + x2 : x2, c2y = isRel ? cy + y2 : y2;
+      const nx = isRel ? cx + x : x, ny = isRel ? cy + y : y;
+      const last = current.anchors[current.anchors.length - 1];
+      if (last) last.cOut = { x: c1x - last.x, y: c1y - last.y };
+      addAnchor(nx, ny, { x: c2x - nx, y: c2y - ny });
+      lastCx = c2x; lastCy = c2y; cx = nx; cy = ny;
+    } else if (C === 'Q') {
+      const qx = num(), qy = num(), x = num(), y = num();
+      const qcx = isRel ? cx + qx : qx, qcy = isRel ? cy + qy : qy;
+      const nx = isRel ? cx + x : x, ny = isRel ? cy + y : y;
+      const c1x = cx + (2/3)*(qcx - cx), c1y = cy + (2/3)*(qcy - cy);
+      const c2x = nx + (2/3)*(qcx - nx), c2y = ny + (2/3)*(qcy - ny);
+      const last = current.anchors[current.anchors.length - 1];
+      if (last) last.cOut = { x: c1x - last.x, y: c1y - last.y };
+      addAnchor(nx, ny, { x: c2x - nx, y: c2y - ny });
+      lastCx = qcx; lastCy = qcy; cx = nx; cy = ny;
+    } else if (C === 'T') {
+      const x = num(), y = num();
+      const qcx = lastCx !== null ? 2*cx - lastCx : cx;
+      const qcy = lastCy !== null ? 2*cy - lastCy : cy;
+      const nx = isRel ? cx + x : x, ny = isRel ? cy + y : y;
+      const c1x = cx + (2/3)*(qcx - cx), c1y = cy + (2/3)*(qcy - cy);
+      const c2x = nx + (2/3)*(qcx - nx), c2y = ny + (2/3)*(qcy - ny);
+      const last = current.anchors[current.anchors.length - 1];
+      if (last) last.cOut = { x: c1x - last.x, y: c1y - last.y };
+      addAnchor(nx, ny, { x: c2x - nx, y: c2y - ny });
+      lastCx = qcx; lastCy = qcy; cx = nx; cy = ny;
+    } else if (C === 'A') {
+      const rx = num(), ry = num(), xrot = num(), large = num(), sweep = num(), x = num(), y = num();
+      const nx = isRel ? cx + x : x, ny = isRel ? cy + y : y;
+      const beziers = arcToBezier(cx, cy, rx, ry, xrot, large, sweep, nx, ny);
+      const lastAnchor = current.anchors[current.anchors.length - 1];
+      if (lastAnchor && beziers.length > 0) {
+        lastAnchor.cOut = { x: beziers[0].c1.x - lastAnchor.x, y: beziers[0].c1.y - lastAnchor.y };
+      }
+      for (let bi = 0; bi < beziers.length; bi++) {
+        const seg = beziers[bi];
+        const isLast = bi === beziers.length - 1;
+        const newA = { x: seg.p2.x, y: seg.p2.y, cIn: { x: seg.c2.x - seg.p2.x, y: seg.c2.y - seg.p2.y }, cOut: { x: 0, y: 0 } };
+        if (!isLast) {
+          const nextSeg = beziers[bi + 1];
+          newA.cOut = { x: nextSeg.c1.x - seg.p2.x, y: nextSeg.c1.y - seg.p2.y };
+        }
+        current.anchors.push(newA);
+      }
+      cx = nx; cy = ny;
+      lastCx = null; lastCy = null;
+    } else if (C === 'Z') {
+      if (current) {
+        current.closed = true;
+        if (current.anchors.length > 1) {
+          const first = current.anchors[0];
+          const last = current.anchors[current.anchors.length - 1];
+          if (Math.abs(first.x - last.x) < 0.01 && Math.abs(first.y - last.y) < 0.01) {
+            first.cIn = last.cIn;
+            current.anchors.pop();
+          }
+        }
+        cx = startX; cy = startY;
+        current = null;
+      }
+      lastCx = null; lastCy = null;
+    } else { i++; continue; }
+
+    lastCmd = (C === 'M') ? (isRel ? 'l' : 'L') : cmd;
+  }
+  return subpaths.filter(sp => sp.anchors.length > 0);
+}
+
+function arcToBezier(x1, y1, rx, ry, phi, largeArc, sweep, x2, y2) {
+  if (rx === 0 || ry === 0) return [{ p0:{x:x1,y:y1}, c1:{x:x1,y:y1}, c2:{x:x2,y:y2}, p2:{x:x2,y:y2} }];
+  rx = Math.abs(rx); ry = Math.abs(ry);
+  const phiRad = phi * Math.PI / 180;
+  const cosPhi = Math.cos(phiRad), sinPhi = Math.sin(phiRad);
+  const dx = (x1 - x2) / 2, dy = (y1 - y2) / 2;
+  const x1p = cosPhi*dx + sinPhi*dy;
+  const y1p = -sinPhi*dx + cosPhi*dy;
+  const lambda = (x1p*x1p)/(rx*rx) + (y1p*y1p)/(ry*ry);
+  if (lambda > 1) { const s = Math.sqrt(lambda); rx *= s; ry *= s; }
+  const rx2 = rx*rx, ry2 = ry*ry;
+  const x1p2 = x1p*x1p, y1p2 = y1p*y1p;
+  const sign = (largeArc !== sweep) ? 1 : -1;
+  const n = Math.max(0, rx2*ry2 - rx2*y1p2 - ry2*x1p2);
+  const d = rx2*y1p2 + ry2*x1p2;
+  if (d === 0) return [];
+  const coef = sign * Math.sqrt(n / d);
+  const cxp = coef * (rx * y1p / ry);
+  const cyp = coef * -(ry * x1p / rx);
+  const cx = cosPhi*cxp - sinPhi*cyp + (x1 + x2)/2;
+  const cy = sinPhi*cxp + cosPhi*cyp + (y1 + y2)/2;
+  const ang = (ux, uy, vx, vy) => {
+    const dot = ux*vx + uy*vy;
+    const len = Math.sqrt((ux*ux+uy*uy)*(vx*vx+vy*vy));
+    let a = Math.acos(Math.max(-1, Math.min(1, dot/len)));
+    if (ux*vy - uy*vx < 0) a = -a;
+    return a;
+  };
+  const theta1 = ang(1, 0, (x1p-cxp)/rx, (y1p-cyp)/ry);
+  let dTheta = ang((x1p-cxp)/rx, (y1p-cyp)/ry, (-x1p-cxp)/rx, (-y1p-cyp)/ry);
+  if (!sweep && dTheta > 0) dTheta -= 2*Math.PI;
+  if (sweep && dTheta < 0) dTheta += 2*Math.PI;
+  const segments = Math.max(1, Math.ceil(Math.abs(dTheta) / (Math.PI/2)));
+  const delta = dTheta / segments;
+  const t = (4/3) * Math.tan(delta / 4);
+  const result = [];
+  let theta = theta1, px = x1, py = y1;
+  for (let s = 0; s < segments; s++) {
+    const theta2 = theta + delta;
+    const c1 = Math.cos(theta), s1 = Math.sin(theta);
+    const c2 = Math.cos(theta2), s2 = Math.sin(theta2);
+    const xT2 = rx*c2, yT2 = ry*s2;
+    const ex = cosPhi*xT2 - sinPhi*yT2 + cx;
+    const ey = sinPhi*xT2 + cosPhi*yT2 + cy;
+    const c1xT = rx*(c1 - t*s1), c1yT = ry*(s1 + t*c1);
+    const c2xT = rx*(c2 + t*s2), c2yT = ry*(s2 - t*c2);
+    const c1x = cosPhi*c1xT - sinPhi*c1yT + cx;
+    const c1y = sinPhi*c1xT + cosPhi*c1yT + cy;
+    const c2x = cosPhi*c2xT - sinPhi*c2yT + cx;
+    const c2y = sinPhi*c2xT + cosPhi*c2yT + cy;
+    result.push({ p0:{x:px,y:py}, c1:{x:c1x,y:c1y}, c2:{x:c2x,y:c2y}, p2:{x:ex,y:ey} });
+    px = ex; py = ey;
+    theta = theta2;
+  }
+  return result;
+}
+
+function parseSVGTransform(str) {
+  let m = [1, 0, 0, 1, 0, 0];
+  if (!str) return m;
+  const re = /(matrix|translate|scale|rotate|skewX|skewY)\s*\(([^)]*)\)/gi;
+  let match;
+  while ((match = re.exec(str)) !== null) {
+    const fn = match[1].toLowerCase();
+    const args = match[2].split(/[\s,]+/).map(parseFloat).filter(n => !isNaN(n));
+    let local = [1, 0, 0, 1, 0, 0];
+    if (fn === 'matrix' && args.length >= 6) {
+      local = [args[0], args[1], args[2], args[3], args[4], args[5]];
+    } else if (fn === 'translate' && args.length >= 1) {
+      local = [1, 0, 0, 1, args[0], args[1] || 0];
+    } else if (fn === 'scale' && args.length >= 1) {
+      const sx = args[0], sy = args.length >= 2 ? args[1] : sx;
+      local = [sx, 0, 0, sy, 0, 0];
+    } else if (fn === 'rotate' && args.length >= 1) {
+      const a = args[0] * Math.PI / 180;
+      const cs = Math.cos(a), sn = Math.sin(a);
+      local = [cs, sn, -sn, cs, 0, 0];
+      if (args.length >= 3) {
+        const t1 = [1, 0, 0, 1, args[1], args[2]];
+        const t2 = [1, 0, 0, 1, -args[1], -args[2]];
+        local = multiplyMatrix(multiplyMatrix(t1, local), t2);
+      }
+    } else if (fn === 'skewx' && args.length >= 1) {
+      local = [1, 0, Math.tan(args[0] * Math.PI / 180), 1, 0, 0];
+    } else if (fn === 'skewy' && args.length >= 1) {
+      local = [1, Math.tan(args[0] * Math.PI / 180), 0, 1, 0, 0];
+    }
+    m = multiplyMatrix(m, local);
+  }
+  return m;
+}
+
+function multiplyMatrix(m1, m2) {
+  const [a1, b1, c1, d1, e1, f1] = m1;
+  const [a2, b2, c2, d2, e2, f2] = m2;
+  return [
+    a1*a2 + c1*b2,
+    b1*a2 + d1*b2,
+    a1*c2 + c1*d2,
+    b1*c2 + d1*d2,
+    a1*e2 + c1*f2 + e1,
+    b1*e2 + d1*f2 + f1,
+  ];
+}
+
+function applyMatrixToPoint(m, x, y) {
+  return { x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] };
+}
