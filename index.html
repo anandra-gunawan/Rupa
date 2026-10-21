@@ -36,6 +36,8 @@
   </aside>
 
   <div class="canvas-area" id="canvasArea">
+    <div class="ruler-h" id="rulerH"><canvas id="rulerHCanvas"></canvas></div>
+    <div class="ruler-v" id="rulerV"><canvas id="rulerVCanvas"></canvas></div>
     <canvas id="scene"></canvas>
     <svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
     <div class="floating-toolbar" id="floatingToolbar"></div>
@@ -88,6 +90,12 @@
         <div class="btn-row">
           <button id="btnConvertPath" class="action" title="Convert to path">→ Path</button>
           <button id="btnEditPath" class="action" title="Edit anchors" style="display:none">✏️ Edit</button>
+        </div>
+      </div>
+      <div class="field" id="imageActionsRow" style="display:none">
+        <label>Image</label>
+        <div class="btn-row">
+          <button id="btnCropImage" class="action" title="Crop image">✂️ Crop</button>
         </div>
       </div>
       <div class="field-row">
@@ -192,8 +200,23 @@
 
     <div class="section" id="textSection" style="display:none">
       <h3>Text</h3>
-      <div class="field"><label>Content</label><input type="text" id="propText"></div>
+      <div class="field" style="align-items:flex-start">
+        <label style="padding-top:5px">Content</label>
+        <textarea id="propText" rows="3" style="flex:1;padding:5px 8px;border:1px solid #ddd;border-radius:3px;font-size:12px;font-family:inherit;resize:vertical;outline:none;background:rgba(255,255,255,var(--panel-alpha))"></textarea>
+      </div>
       <div class="field"><label>Font size</label><input type="number" id="propFontSize" min="6" step="1"></div>
+      <div class="field">
+        <label>Area text</label>
+        <input type="checkbox" id="propTextBox">
+      </div>
+      <div class="field">
+        <label>Align</label>
+        <select id="propTextAlign">
+          <option value="left">Left</option>
+          <option value="center">Center</option>
+          <option value="right">Right</option>
+        </select>
+      </div>
     </div>
 
     <div class="section">
@@ -224,6 +247,14 @@
   <div class="actions">
     <button class="btn-fresh" id="btnRestoreFresh">Start Fresh</button>
     <button class="btn-restore" id="btnRestoreAutosave">Restore</button>
+  </div>
+</div>
+
+<div class="text-edit-modal" id="textEditModal">
+  <textarea id="textEditArea" rows="6"></textarea>
+  <div class="modal-actions">
+    <button id="btnTextEditCancel" class="btn-fresh">Cancel</button>
+    <button id="btnTextEditOK" class="btn-restore">OK</button>
   </div>
 </div>
 
